@@ -71482,11 +71482,22 @@ __name(writeRequestBody, "writeRequestBody");
 function writeBody(httpRequest, body) {
   if (body instanceof import_stream.Readable) {
     body.pipe(httpRequest);
-  } else if (body) {
-    httpRequest.end(Buffer.from(body));
-  } else {
-    httpRequest.end();
+    return;
   }
+  if (body) {
+    if (Buffer.isBuffer(body) || typeof body === "string") {
+      httpRequest.end(body);
+      return;
+    }
+    const uint8 = body;
+    if (typeof uint8 === "object" && uint8.buffer && typeof uint8.byteOffset === "number" && typeof uint8.byteLength === "number") {
+      httpRequest.end(Buffer.from(uint8.buffer, uint8.byteOffset, uint8.byteLength));
+      return;
+    }
+    httpRequest.end(Buffer.from(body));
+    return;
+  }
+  httpRequest.end();
 }
 __name(writeBody, "writeBody");
 
@@ -71494,6 +71505,7 @@ __name(writeBody, "writeBody");
 var DEFAULT_REQUEST_TIMEOUT = 0;
 var _NodeHttpHandler = class _NodeHttpHandler {
   constructor(options) {
+    this.socketWarningTimestamp = 0;
     // Node http handler is hard-coded to http/1.1: https://github.com/nodejs/node/blob/ff5664b83b89c55e4ab5d5f60068fb457f1f5872/lib/_http_server.js#L286
     this.metadata = { handlerProtocol: "http/1.1" };
     this.configProvider = new Promise((resolve, reject) => {
@@ -71516,6 +71528,39 @@ var _NodeHttpHandler = class _NodeHttpHandler {
     }
     return new _NodeHttpHandler(instanceOrOptions);
   }
+  /**
+   * @internal
+   *
+   * @param agent - http(s) agent in use by the NodeHttpHandler instance.
+   * @returns timestamp of last emitted warning.
+   */
+  static checkSocketUsage(agent, socketWarningTimestamp) {
+    var _a, _b;
+    const { sockets, requests, maxSockets } = agent;
+    if (typeof maxSockets !== "number" || maxSockets === Infinity) {
+      return socketWarningTimestamp;
+    }
+    const interval = 15e3;
+    if (Date.now() - interval < socketWarningTimestamp) {
+      return socketWarningTimestamp;
+    }
+    if (sockets && requests) {
+      for (const origin in sockets) {
+        const socketsInUse = ((_a = sockets[origin]) == null ? void 0 : _a.length) ?? 0;
+        const requestsEnqueued = ((_b = requests[origin]) == null ? void 0 : _b.length) ?? 0;
+        if (socketsInUse >= maxSockets && requestsEnqueued >= 2 * maxSockets) {
+          console.warn(
+            "@smithy/node-http-handler:WARN",
+            `socket usage at capacity=${socketsInUse} and ${requestsEnqueued} additional requests are enqueued.`,
+            "See https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/node-configuring-maxsockets.html",
+            "or increase socketAcquisitionWarningTimeout=(millis) in the NodeHttpHandler config."
+          );
+          return Date.now();
+        }
+      }
+    }
+    return socketWarningTimestamp;
+  }
   resolveDefaultConfig(options) {
     const { requestTimeout, connectionTimeout, socketTimeout, httpAgent, httpsAgent } = options || {};
     const keepAlive = true;
@@ -71523,8 +71568,18 @@ var _NodeHttpHandler = class _NodeHttpHandler {
     return {
       connectionTimeout,
       requestTimeout: requestTimeout ?? socketTimeout,
-      httpAgent: httpAgent || new import_http.Agent({ keepAlive, maxSockets }),
-      httpsAgent: httpsAgent || new import_https.Agent({ keepAlive, maxSockets })
+      httpAgent: (() => {
+        if (httpAgent instanceof import_http.Agent || typeof (httpAgent == null ? void 0 : httpAgent.destroy) === "function") {
+          return httpAgent;
+        }
+        return new import_http.Agent({ keepAlive, maxSockets, ...httpAgent });
+      })(),
+      httpsAgent: (() => {
+        if (httpsAgent instanceof import_https.Agent || typeof (httpsAgent == null ? void 0 : httpsAgent.destroy) === "function") {
+          return httpsAgent;
+        }
+        return new import_https.Agent({ keepAlive, maxSockets, ...httpsAgent });
+      })()
     };
   }
   destroy() {
@@ -71536,10 +71591,12 @@ var _NodeHttpHandler = class _NodeHttpHandler {
     if (!this.config) {
       this.config = await this.configProvider;
     }
+    let socketCheckTimeoutId;
     return new Promise((_resolve, _reject) => {
       let writeRequestBodyPromise = void 0;
       const resolve = /* @__PURE__ */ __name(async (arg) => {
         await writeRequestBodyPromise;
+        clearTimeout(socketCheckTimeoutId);
         _resolve(arg);
       }, "resolve");
       const reject = /* @__PURE__ */ __name(async (arg) => {
@@ -71556,6 +71613,10 @@ var _NodeHttpHandler = class _NodeHttpHandler {
         return;
       }
       const isSSL = request.protocol === "https:";
+      const agent = isSSL ? this.config.httpsAgent : this.config.httpAgent;
+      socketCheckTimeoutId = setTimeout(() => {
+        this.socketWarningTimestamp = _NodeHttpHandler.checkSocketUsage(agent, this.socketWarningTimestamp);
+      }, this.config.socketAcquisitionWarningTimeout ?? (this.config.requestTimeout ?? 2e3) + (this.config.connectionTimeout ?? 1e3));
       const queryString = (0, import_querystring_builder.buildQueryString)(request.query || {});
       let auth = void 0;
       if (request.username != null || request.password != null) {
@@ -71576,7 +71637,7 @@ var _NodeHttpHandler = class _NodeHttpHandler {
         method: request.method,
         path,
         port: request.port,
-        agent: isSSL ? this.config.httpsAgent : this.config.httpAgent,
+        agent,
         auth
       };
       const requestFunc = isSSL ? import_https.request : import_http.request;
