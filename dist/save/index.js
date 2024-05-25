@@ -93830,7 +93830,7 @@ function getCacheEntry(keys, paths, { compressionMethod, enableCrossOsArchive })
             });
             const listObjectsParams = {
                 Bucket: bucketName,
-                Prefix: [s3Prefix, restoreKey].join("/")
+                Prefix: restoreKey
             };
             try {
                 const { Contents = [] } = yield s3Client.send(new client_s3_1.ListObjectsV2Command(listObjectsParams));
@@ -93872,7 +93872,7 @@ function downloadCache(archiveLocation, archivePath, options) {
     });
 }
 exports.downloadCache = downloadCache;
-function saveCache(key, paths, archivePath, { compressionMethod, enableCrossOsArchive, cacheSize: archiveFileSize }) {
+function saveCache(key, _paths, archivePath, { compressionMethod, enableCrossOsArchive, cacheSize: archiveFileSize }) {
     return __awaiter(this, void 0, void 0, function* () {
         if (!bucketName) {
             throw new Error("Environment variable RUNS_ON_S3_BUCKET_CACHE not set");
@@ -93880,11 +93880,7 @@ function saveCache(key, paths, archivePath, { compressionMethod, enableCrossOsAr
         if (!region) {
             throw new Error("Environment variable RUNS_ON_AWS_REGION not set");
         }
-        const s3Prefix = getS3Prefix(paths, {
-            compressionMethod,
-            enableCrossOsArchive
-        });
-        const s3Key = `${s3Prefix}/${key}`;
+        const s3Key = key;
         const multipartUpload = new lib_storage_1.Upload({
             client: s3Client,
             params: {

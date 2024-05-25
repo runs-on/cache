@@ -16,7 +16,7 @@ import * as utils from "@actions/cache/lib/internal/cacheUtils";
 import { Upload } from "@aws-sdk/lib-storage";
 import { downloadCacheHttpClientConcurrent } from "./downloadUtils";
 
-export interface ArtifactCacheEntry {
+export interface ArtifactCacheEntry { 
     cacheKey?: string;
     scope?: string;
     cacheVersion?: string;
@@ -110,7 +110,7 @@ export async function getCacheEntry(
         });
         const listObjectsParams = {
             Bucket: bucketName,
-            Prefix: [s3Prefix, restoreKey].join("/")
+            Prefix: restoreKey
         };
 
         try {
@@ -170,7 +170,7 @@ export async function downloadCache(
 
 export async function saveCache(
     key: string,
-    paths: string[],
+    _paths: string[],
     archivePath: string,
     { compressionMethod, enableCrossOsArchive, cacheSize: archiveFileSize }
 ): Promise<void> {
@@ -182,11 +182,7 @@ export async function saveCache(
         throw new Error("Environment variable RUNS_ON_AWS_REGION not set");
     }
 
-    const s3Prefix = getS3Prefix(paths, {
-        compressionMethod,
-        enableCrossOsArchive
-    });
-    const s3Key = `${s3Prefix}/${key}`;
+    const s3Key = key;
 
     const multipartUpload = new Upload({
         client: s3Client,
