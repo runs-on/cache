@@ -95374,7 +95374,8 @@ function saveCacheSync(key, paths) {
         const s3Prefix = getS3PrefixSync(paths);
         const s3Key = `${s3Prefix}/${key}`;
         for (const path of paths) {
-            const s3Path = `${s3Key}/${path}`;
+            const s3Path = `s3://${bucketName}/${s3Key}/${path}`;
+            core.info(`Syncing ${path} to ${s3Path}`);
             yield sync(path, s3Path);
         }
         // Commit Cache
@@ -95635,18 +95636,24 @@ function saveCache(paths, key, options, enableCrossOsArchive = false, sync = fal
             else {
                 if (noCompression) {
                     // Create uncompressed tar archive
-                    const first = true;
+                    let first = true;
                     for (const cachePath of cachePaths) {
                         let command = `tar -rf ${archivePath} -C ${cachePath} .`;
                         if (first) {
+                            first = false;
                             // Create a new archive
                             command = `tar -cf ${archivePath} -C ${cachePath} .`;
                         }
-                        (0, child_process_1.execSync)(command);
+                        core.debug(`Appending ${cachePath} to ${archivePath}`);
+                        const output = (0, child_process_1.execSync)(command);
+                        if (output && output.length > 0) {
+                            core.debug(output.toString());
+                        }
                     }
                 }
-                else
+                else {
                     yield (0, tar_1.createTar)(archiveFolder, cachePaths, compressionMethod);
+                }
                 if (core.isDebug()) {
                     yield (0, tar_1.listTar)(archivePath, compressionMethod);
                 }
@@ -96015,6 +96022,8 @@ const custom = __importStar(__nccwpck_require__(1082));
 const canSaveToS3 = process.env["RUNS_ON_S3_BUCKET_CACHE"] !== undefined;
 function restoreImpl(stateProvider, earlyExit) {
     return __awaiter(this, void 0, void 0, function* () {
+        core.info("Starting Cache Restore Action");
+        core.debug(`Operating System: ${process.platform}`);
         try {
             if (!utils.isCacheFeatureAvailable()) {
                 core.setOutput(constants_1.Outputs.CacheHit, "false");
@@ -96038,7 +96047,12 @@ function restoreImpl(stateProvider, earlyExit) {
             let cacheKey;
             if (canSaveToS3) {
                 core.info("The cache action detected a local S3 bucket cache. Using it.");
-                cacheKey = yield custom.restoreCache(cachePaths, primaryKey, restoreKeys, { lookupOnly: lookupOnly }, isSync);
+                if (isSync) {
+                    cacheKey = yield custom.restoreCacheSync(cachePaths, primaryKey, { lookupOnly: lookupOnly });
+                }
+                else {
+                    cacheKey = yield custom.restoreCache(cachePaths, primaryKey, restoreKeys, { lookupOnly: lookupOnly }, isSync);
+                }
             }
             else {
                 cacheKey = yield cache.restoreCache(cachePaths, primaryKey, restoreKeys, { lookupOnly: lookupOnly }, enableCrossOsArchive);

@@ -16,6 +16,9 @@ export async function restoreImpl(
     stateProvider: IStateProvider,
     earlyExit?: boolean | undefined
 ): Promise<string | undefined> {
+    core.info("Starting Cache Restore Action");
+    core.debug(`Operating System: ${process.platform}`);
+
     try {
         if (!utils.isCacheFeatureAvailable()) {
             core.setOutput(Outputs.CacheHit, "false");
@@ -52,13 +55,22 @@ export async function restoreImpl(
             core.info(
                 "The cache action detected a local S3 bucket cache. Using it."
             );
-            cacheKey = await custom.restoreCache(
-                cachePaths,
-                primaryKey,
-                restoreKeys,
-                { lookupOnly: lookupOnly },
-                isSync
-            );
+
+            if (isSync) {
+                cacheKey = await custom.restoreCacheSync(
+                    cachePaths,
+                    primaryKey,
+                    { lookupOnly: lookupOnly }
+                );
+            } else {
+                cacheKey = await custom.restoreCache(
+                    cachePaths,
+                    primaryKey,
+                    restoreKeys,
+                    { lookupOnly: lookupOnly },
+                    isSync
+                );
+            }
         } else {
             cacheKey = await cache.restoreCache(
                 cachePaths,
