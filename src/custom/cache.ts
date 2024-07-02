@@ -265,18 +265,24 @@ export async function saveCache(
         else {
             if (noCompression) {
                 // Create uncompressed tar archive
-                const first = true;
+                let first = true;
                 for (const cachePath of cachePaths) {
                     let command = `tar -rf ${archivePath} -C ${cachePath} .`;
                     if (first) {
+                        first = false;
                         // Create a new archive
                         command = `tar -cf ${archivePath} -C ${cachePath} .`;
                     }
-                    execSync(command);
+                    core.debug(`Appending ${cachePath} to ${archivePath}`);
+                    const output = execSync(command);
+                    if (output && output.length > 0) {
+                        core.debug(output.toString());
+                    }
                 }
             }
-            else
+            else {
                 await createTar(archiveFolder, cachePaths, compressionMethod);
+            }
             if (core.isDebug()) {
                 await listTar(archivePath, compressionMethod);
             }

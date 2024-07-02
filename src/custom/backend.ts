@@ -314,6 +314,7 @@ export async function saveCacheSync(
 
     for (const path of paths) {
         const s3Path = `s3://${bucketName}/${s3Key}/${path}`;
+        core.info(`Syncing ${path} to ${s3Path}`);
         await sync(path, s3Path);
     }
 
