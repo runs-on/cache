@@ -4,7 +4,8 @@ import {
     ListObjectsV2Command
 } from "@aws-sdk/client-s3";
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
-import { createReadStream } from "fs";
+import { createReadStream, fstat } from "fs";
+import * as fs from "fs/promises";
 import * as crypto from "crypto";
 import {
     DownloadOptions,
@@ -15,6 +16,7 @@ import * as core from "@actions/core";
 import * as utils from "@actions/cache/lib/internal/cacheUtils";
 import { Upload } from "@aws-sdk/lib-storage";
 import { downloadCacheHttpClientConcurrent } from "./downloadUtils";
+import { S3SyncClient } from 's3-sync-client';
 
 export interface ArtifactCacheEntry {
     cacheKey?: string;
@@ -95,19 +97,34 @@ function getS3Prefix(
     return ["cache", repository, version].join("/");
 }
 
+function getS3PrefixSync(
+    paths: string[]
+): string {
+    const repository = process.env.GITHUB_REPOSITORY;
+    const version = getCacheVersion(
+        paths
+    );
+
+    return ["cache", repository, version].join("/");
+}
+
 export async function getCacheEntry(
     keys,
     paths,
-    { compressionMethod, enableCrossOsArchive }
+    { compressionMethod, enableCrossOsArchive },
+    isSync = false
 ) {
     const cacheEntry: ArtifactCacheEntry = {};
 
     // Find the most recent key matching one of the restoreKeys prefixes
     for (const restoreKey of keys) {
-        const s3Prefix = getS3Prefix(paths, {
+        let s3Prefix = getS3Prefix(paths, {
             compressionMethod,
             enableCrossOsArchive
         });
+        if (isSync) {
+            s3Prefix = getS3PrefixSync(paths);
+        }
         const listObjectsParams = {
             Bucket: bucketName,
             Prefix: [s3Prefix, restoreKey].join("/")
@@ -134,6 +151,45 @@ export async function getCacheEntry(
             );
         }
     }
+
+    return cacheEntry; // No keys found
+}
+
+export async function getCacheEntrySync(
+    key,
+    paths
+) {
+    const cacheEntry: ArtifactCacheEntry = {};
+
+    // Find the most recent key matching one of the restoreKeys prefixes
+    const s3Prefix = getS3PrefixSync(paths);
+
+    const listObjectsParams = {
+        Bucket: bucketName,
+        Prefix: [s3Prefix, key].join("/")
+    };
+
+    try {
+        const { Contents = [] } = await s3Client.send(
+            new ListObjectsV2Command(listObjectsParams)
+        );
+        if (Contents.length > 0) {
+            // Sort keys by LastModified time in descending order
+            const sortedKeys = Contents.sort(
+                (a, b) => Number(b.LastModified) - Number(a.LastModified)
+            );
+            const s3Path = sortedKeys[0].Key; // Return the most recent key
+            cacheEntry.cacheKey = s3Path?.replace(`${s3Prefix}/`, "");
+            cacheEntry.archiveLocation = `s3://${bucketName}/${s3Path}`;
+            return cacheEntry;
+        }
+    } catch (error) {
+        console.error(
+            `Error listing objects with prefix ${key} in bucket ${bucketName}:`,
+            error
+        );
+    }
+
 
     return cacheEntry; // No keys found
 }
@@ -166,6 +222,26 @@ export async function downloadCache(
         concurrentBlobDownloads: true,
         partSize: downloadPartSize
     });
+}
+
+export async function downloadCacheSync(
+    s3SyncLocation: string,
+    finalPaths: string[]
+): Promise<void> {
+    if (!bucketName) {
+        throw new Error("Environment variable RUNS_ON_S3_BUCKET_CACHE not set");
+    }
+
+    if (!region) {
+        throw new Error("Environment variable RUNS_ON_AWS_REGION not set");
+    }
+
+    const { sync } = new S3SyncClient({ client: s3Client });
+
+    for (const path of finalPaths) {
+        const s3Path = `${s3SyncLocation}/${path}`;
+        await sync(s3Path, path);
+    }
 }
 
 export async function saveCache(
@@ -216,5 +292,45 @@ export async function saveCache(
     });
 
     await multipartUpload.done();
+    core.info(`Cache saved successfully.`);
+}
+
+export async function saveCacheSync(
+    key: string,
+    paths: string[]
+): Promise<void> {
+    if (!bucketName) {
+        throw new Error("Environment variable RUNS_ON_S3_BUCKET_CACHE not set");
+    }
+
+    if (!region) {
+        throw new Error("Environment variable RUNS_ON_AWS_REGION not set");
+    }
+
+    const { sync } = new S3SyncClient({ client: s3Client });
+
+    const s3Prefix = getS3PrefixSync(paths);
+    const s3Key = `${s3Prefix}/${key}`;
+
+    for (const path of paths) {
+        const s3Path = `${s3Key}/${path}`;
+        await sync(path, s3Path);
+    }
+
+    // Commit Cache
+    // const cacheSize = utils.getArchiveFileSizeInBytes(archivePath);
+    // core.info(
+    //     `Cache Size: ~${Math.round(
+    //         cacheSize / (1024 * 1024)
+    //     )} MB (${cacheSize} B)`
+    // );
+
+    // const totalParts = Math.ceil(cacheSize / uploadPartSize);
+    // core.info(`Uploading cache from ${archivePath} to ${bucketName}/${s3Key}`);
+    // multipartUpload.on("httpUploadProgress", progress => {
+    //     core.info(`Uploaded part ${progress.part}/${totalParts}.`);
+    // });
+
+    // await multipartUpload.done();
     core.info(`Cache saved successfully.`);
 }

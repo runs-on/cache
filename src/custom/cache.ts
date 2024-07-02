@@ -10,6 +10,7 @@ import {
     listTar
 } from "@actions/cache/lib/internal/tar";
 import { DownloadOptions, UploadOptions } from "@actions/cache/lib/options";
+import { execSync } from "child_process";
 
 export class ValidationError extends Error {
     constructor(message: string) {
@@ -160,6 +161,62 @@ export async function restoreCache(
 }
 
 /**
+ * Restores cache from primary key using s3 sync
+ *
+ * @param paths a list of file paths to restore from the cache
+ * @param primaryKey an explicit key for restoring the cache
+ * @param restoreKeys an optional ordered list of keys to use for restoring the cache if no cache hit occurred for key
+ * @param downloadOptions cache download options
+ * @param enableCrossOsArchive an optional boolean enabled to restore on windows any cache created on any platform
+ * @returns string returns the key for the cache hit, otherwise returns undefined
+ */
+export async function restoreCacheSync(
+    paths: string[],
+    primaryKey: string,
+    options?: DownloadOptions,
+): Promise<string | undefined> {
+    checkPaths(paths);
+
+    core.debug("Resolved Keys:");
+
+    checkKey(primaryKey);
+
+    try {
+        // path are needed to compute version
+        const cacheEntry = await cacheHttpClient.getCacheEntrySync(primaryKey, paths);
+        if (!cacheEntry?.archiveLocation) {
+            // Cache not found
+            return undefined;
+        }
+
+        if (options?.lookupOnly) {
+            core.info("Lookup only - skipping download");
+            return cacheEntry.cacheKey;
+        }
+
+        // Download the cache from the cache entry
+        await cacheHttpClient.downloadCacheSync(
+            cacheEntry.archiveLocation,
+            paths
+        );
+
+        core.info("Cache restored successfully");
+
+        return cacheEntry.cacheKey;
+    } catch (error) {
+        const typedError = error as Error;
+        if (typedError.name === ValidationError.name) {
+            throw error;
+        } else {
+            // Supress all non-validation cache related errors because caching should be optional
+            core.warning(`Failed to restore: ${(error as Error).message}`);
+        }
+    }
+
+    return undefined;
+}
+
+/**
  * Saves a list of files with the specified key
  *
  * @param paths a list of file paths to be cached
@@ -172,7 +229,9 @@ export async function saveCache(
     paths: string[],
     key: string,
     options?: UploadOptions,
-    enableCrossOsArchive = false
+    enableCrossOsArchive = false,
+    sync = false,
+    noCompression = true
 ): Promise<number> {
     checkPaths(paths);
     checkKey(key);
@@ -199,18 +258,37 @@ export async function saveCache(
     core.debug(`Archive Path: ${archivePath}`);
 
     try {
-        await createTar(archiveFolder, cachePaths, compressionMethod);
-        if (core.isDebug()) {
-            await listTar(archivePath, compressionMethod);
+        if (sync) {
+            // const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
+            await cacheHttpClient.saveCacheSync(key, paths);
         }
-        const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
-        core.debug(`File Size: ${archiveFileSize}`);
+        else {
+            if (noCompression) {
+                // Create uncompressed tar archive
+                const first = true;
+                for (const cachePath of cachePaths) {
+                    let command = `tar -rf ${archivePath} -C ${cachePath} .`;
+                    if (first) {
+                        // Create a new archive
+                        command = `tar -cf ${archivePath} -C ${cachePath} .`;
+                    }
+                    execSync(command);
+                }
+            }
+            else
+                await createTar(archiveFolder, cachePaths, compressionMethod);
+            if (core.isDebug()) {
+                await listTar(archivePath, compressionMethod);
+            }
+            const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
+            core.debug(`File Size: ${archiveFileSize}`);
 
-        await cacheHttpClient.saveCache(key, paths, archivePath, {
-            compressionMethod,
-            enableCrossOsArchive,
-            cacheSize: archiveFileSize
-        });
+            await cacheHttpClient.saveCache(key, paths, archivePath, {
+                compressionMethod,
+                enableCrossOsArchive,
+                cacheSize: archiveFileSize
+            });
+        }
 
         // dummy cacheId, if we get there without raising, it means the cache has been saved
         cacheId = 1;

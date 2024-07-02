@@ -2232,7 +2232,7 @@ class OidcClient {
                 .catch(error => {
                 throw new Error(`Failed to get ID Token. \n 
         Error Code : ${error.statusCode}\n 
-        Error Message: ${error.result.message}`);
+        Error Message: ${error.message}`);
             });
             const id_token = (_a = res.result) === null || _a === void 0 ? void 0 : _a.value;
             if (!id_token) {
@@ -84541,6 +84541,1404 @@ module.exports.implForWrapper = function (wrapper) {
 
 /***/ }),
 
+/***/ 2201:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.S3SyncClient = void 0;
+const client_s3_1 = __nccwpck_require__(9250);
+const SyncCommand_1 = __nccwpck_require__(1655);
+class S3SyncClient {
+    client;
+    constructor(options) {
+        this.client = options?.client ?? new client_s3_1.S3Client(options);
+        this.sync = this.sync.bind(this);
+    }
+    async sync(source, target, options) {
+        return new SyncCommand_1.SyncCommand({
+            source,
+            target,
+            ...options,
+        }).execute(this.client);
+    }
+    async send(command) {
+        return command.execute(this.client);
+    }
+}
+exports.S3SyncClient = S3SyncClient;
+exports["default"] = S3SyncClient;
+//# sourceMappingURL=S3SyncClient.js.map
+
+/***/ }),
+
+/***/ 4502:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.TransferMonitor = void 0;
+const node_events_1 = __nccwpck_require__(5673);
+class TransferMonitor extends node_events_1.EventEmitter {
+    transferredObjectCount = 0;
+    totalObjectCount = 0;
+    transferredDataSize = 0;
+    totalDataSize = 0;
+    constructor() {
+        super();
+        this.on('metadata', this.setMetadata.bind(this));
+        this.on('size', this.updateDataSize.bind(this));
+        this.on('object', this.updateObjectCount.bind(this));
+    }
+    setMetadata(totalDataSize, totalObjectCount) {
+        this.totalDataSize = totalDataSize;
+        this.totalObjectCount = totalObjectCount;
+    }
+    updateDataSize(size) {
+        this.transferredDataSize += size;
+        this.emit('progress', this.getStatus());
+    }
+    updateObjectCount(count = 1) {
+        this.transferredObjectCount += count;
+        this.emit('progress', this.getStatus());
+    }
+    getStatus() {
+        return {
+            size: {
+                current: this.transferredDataSize,
+                total: this.totalDataSize,
+            },
+            count: {
+                current: this.transferredObjectCount,
+                total: this.totalObjectCount,
+            },
+        };
+    }
+}
+exports.TransferMonitor = TransferMonitor;
+exports["default"] = TransferMonitor;
+//# sourceMappingURL=TransferMonitor.js.map
+
+/***/ }),
+
+/***/ 6233:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.mergeInput = void 0;
+function isFunction(properties) {
+    return typeof properties === 'function';
+}
+function mergeInput(commandInput, properties) {
+    return {
+        ...commandInput,
+        ...(isFunction(properties)
+            ? properties(commandInput)
+            : properties),
+    };
+}
+exports.mergeInput = mergeInput;
+//# sourceMappingURL=Command.js.map
+
+/***/ }),
+
+/***/ 1506:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CompleteMultipartLocalObjectCommand = void 0;
+const client_s3_1 = __nccwpck_require__(9250);
+class CompleteMultipartLocalObjectCommand {
+    localObject;
+    bucket;
+    uploadId;
+    parts;
+    constructor(input) {
+        this.localObject = input.localObject;
+        this.bucket = input.bucket;
+        this.uploadId = input.uploadId;
+        this.parts = input.parts;
+    }
+    async execute(client) {
+        const parts = [...this.parts]
+            .sort((a, b) => a.partNumber - b.partNumber)
+            .map((part) => ({
+            ETag: part.eTag,
+            PartNumber: part.partNumber,
+        }));
+        await client.send(new client_s3_1.CompleteMultipartUploadCommand({
+            Bucket: this.bucket,
+            Key: this.localObject.id,
+            UploadId: this.uploadId,
+            MultipartUpload: { Parts: parts },
+        }));
+    }
+}
+exports.CompleteMultipartLocalObjectCommand = CompleteMultipartLocalObjectCommand;
+//# sourceMappingURL=CompleteMultipartLocalObjectCommand.js.map
+
+/***/ }),
+
+/***/ 7817:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CopyBucketObjectCommand = void 0;
+const client_s3_1 = __nccwpck_require__(9250);
+const Command_1 = __nccwpck_require__(6233);
+class CopyBucketObjectCommand {
+    bucketObject;
+    targetBucket;
+    abortSignal;
+    commandInput;
+    monitor;
+    constructor(input) {
+        this.bucketObject = input.bucketObject;
+        this.targetBucket = input.targetBucket;
+        this.abortSignal = input.abortSignal;
+        this.commandInput = input.commandInput;
+        this.monitor = input.monitor;
+    }
+    async execute(client) {
+        const commandInput = (0, Command_1.mergeInput)({
+            Bucket: this.targetBucket,
+            Key: this.bucketObject.id,
+            CopySource: encodeURI(`${this.bucketObject.bucket}/${this.bucketObject.key}`),
+        }, this.commandInput);
+        await client.send(new client_s3_1.CopyObjectCommand(commandInput), {
+            abortSignal: this.abortSignal,
+        });
+        if (this.monitor) {
+            this.monitor.emit('size', this.bucketObject.size);
+            this.monitor.emit('object');
+        }
+    }
+}
+exports.CopyBucketObjectCommand = CopyBucketObjectCommand;
+//# sourceMappingURL=CopyBucketObjectCommand.js.map
+
+/***/ }),
+
+/***/ 3575:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CopyBucketObjectsCommand = void 0;
+const async_1 = __nccwpck_require__(603);
+const constants_1 = __nccwpck_require__(958);
+const CopyBucketObjectCommand_1 = __nccwpck_require__(7817);
+class CopyBucketObjectsCommand {
+    bucketObjects;
+    targetBucket;
+    abortSignal;
+    commandInput;
+    monitor;
+    maxConcurrentTransfers;
+    constructor(input) {
+        this.bucketObjects = input.bucketObjects;
+        this.targetBucket = input.targetBucket;
+        this.abortSignal = input.abortSignal;
+        this.commandInput = input.commandInput;
+        this.monitor = input.monitor;
+        this.maxConcurrentTransfers =
+            input.maxConcurrentTransfers ?? constants_1.DEFAULT_MAX_CONCURRENT_TRANSFERS;
+    }
+    async execute(client) {
+        if (this.monitor) {
+            const totalDataSize = this.bucketObjects.reduce((total, bucketObject) => total + bucketObject.size, 0);
+            this.monitor.emit('metadata', totalDataSize, this.bucketObjects.length);
+        }
+        await (0, async_1.asyncMap)(this.bucketObjects, this.maxConcurrentTransfers, async (bucketObject) => {
+            const command = new CopyBucketObjectCommand_1.CopyBucketObjectCommand({
+                bucketObject,
+                targetBucket: this.targetBucket,
+                abortSignal: this.abortSignal,
+                commandInput: this.commandInput,
+                monitor: this.monitor,
+            });
+            await command.execute(client);
+        });
+    }
+}
+exports.CopyBucketObjectsCommand = CopyBucketObjectsCommand;
+//# sourceMappingURL=CopyBucketObjectsCommand.js.map
+
+/***/ }),
+
+/***/ 4967:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CreateMultipartLocalObjectUploadCommand = void 0;
+const client_s3_1 = __nccwpck_require__(9250);
+const Command_1 = __nccwpck_require__(6233);
+class CreateMultipartLocalObjectUploadCommand {
+    localObject;
+    bucket;
+    commandInput;
+    constructor(input) {
+        this.localObject = input.localObject;
+        this.bucket = input.bucket;
+        this.commandInput = input.commandInput;
+    }
+    async execute(client) {
+        const uploadCommandInput = (0, Command_1.mergeInput)({
+            Bucket: this.bucket,
+            Key: this.localObject.id,
+        }, this.commandInput);
+        const result = await client.send(new client_s3_1.CreateMultipartUploadCommand(uploadCommandInput));
+        return result.UploadId;
+    }
+}
+exports.CreateMultipartLocalObjectUploadCommand = CreateMultipartLocalObjectUploadCommand;
+//# sourceMappingURL=CreateMultipartLocalObjectUploadCommand.js.map
+
+/***/ }),
+
+/***/ 842:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DeleteBucketObjectsCommand = void 0;
+const client_s3_1 = __nccwpck_require__(9250);
+class DeleteBucketObjectsCommand {
+    bucket;
+    keys;
+    constructor(input) {
+        this.bucket = input.bucket;
+        this.keys = input.keys;
+    }
+    async execute(client) {
+        let deleted = 0;
+        while (deleted < this.keys.length) {
+            const chunk = this.keys.slice(deleted, deleted + 1000);
+            await client.send(new client_s3_1.DeleteObjectsCommand({
+                Bucket: this.bucket,
+                Delete: {
+                    Objects: chunk.map((key) => ({ Key: key })),
+                },
+            }));
+            deleted += chunk.length;
+        }
+        return deleted;
+    }
+}
+exports.DeleteBucketObjectsCommand = DeleteBucketObjectsCommand;
+//# sourceMappingURL=DeleteBucketObjectsCommand.js.map
+
+/***/ }),
+
+/***/ 2313:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DownloadBucketObjectCommand = void 0;
+const node_path_1 = __importDefault(__nccwpck_require__(9411));
+const fs_1 = __nccwpck_require__(7147);
+const client_s3_1 = __nccwpck_require__(9250);
+const node_fs_1 = __importDefault(__nccwpck_require__(7561));
+const Command_1 = __nccwpck_require__(6233);
+const path_1 = __nccwpck_require__(2418);
+class DownloadBucketObjectCommand {
+    bucketObject;
+    localDir;
+    abortSignal;
+    commandInput;
+    monitor;
+    constructor(input) {
+        this.bucketObject = input.bucketObject;
+        this.localDir = input.localDir;
+        this.abortSignal = input.abortSignal;
+        this.commandInput = input.commandInput;
+        this.monitor = input.monitor;
+    }
+    async execute(client) {
+        const relativePath = (0, path_1.toLocalPath)(this.bucketObject.id);
+        const filePath = node_path_1.default.join(this.localDir, relativePath);
+        await fs_1.promises.mkdir(node_path_1.default.dirname(filePath), { recursive: true });
+        const getObjectCommandInput = (0, Command_1.mergeInput)({
+            Bucket: this.bucketObject.bucket,
+            Key: this.bucketObject.key,
+        }, this.commandInput);
+        const response = await client.send(new client_s3_1.GetObjectCommand(getObjectCommandInput), { abortSignal: this.abortSignal });
+        const readStream = response.Body;
+        const { LastModified } = response;
+        const writeStream = readStream.pipe(node_fs_1.default.createWriteStream(filePath));
+        if (this.monitor) {
+            readStream.on('data', (data) => {
+                this.monitor.emit('size', data.length);
+            });
+            writeStream.on('finish', () => {
+                this.monitor.emit('object');
+            });
+        }
+        await new Promise((resolve, reject) => {
+            writeStream.on('error', reject);
+            writeStream.on('finish', () => {
+                node_fs_1.default.utimes(filePath, LastModified, LastModified, (err) => {
+                    if (err)
+                        reject(err);
+                    else
+                        resolve();
+                });
+            });
+        });
+    }
+}
+exports.DownloadBucketObjectCommand = DownloadBucketObjectCommand;
+//# sourceMappingURL=DownloadBucketObjectCommand.js.map
+
+/***/ }),
+
+/***/ 5981:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DownloadBucketObjectsCommand = void 0;
+const async_1 = __nccwpck_require__(603);
+const constants_1 = __nccwpck_require__(958);
+const DownloadBucketObjectCommand_1 = __nccwpck_require__(2313);
+class DownloadBucketObjectsCommand {
+    bucketObjects;
+    localDir;
+    abortSignal;
+    commandInput;
+    monitor;
+    maxConcurrentTransfers;
+    constructor(input) {
+        this.bucketObjects = input.bucketObjects;
+        this.localDir = input.localDir;
+        this.abortSignal = input.abortSignal;
+        this.commandInput = input.commandInput;
+        this.monitor = input.monitor;
+        this.maxConcurrentTransfers =
+            input.maxConcurrentTransfers ?? constants_1.DEFAULT_MAX_CONCURRENT_TRANSFERS;
+    }
+    async execute(client) {
+        if (this.monitor) {
+            const totalDataSize = this.bucketObjects.reduce((total, bucketObject) => total + bucketObject.size, 0);
+            this.monitor.emit('metadata', totalDataSize, this.bucketObjects.length);
+        }
+        await (0, async_1.asyncMap)(this.bucketObjects, this.maxConcurrentTransfers, async (bucketObject) => {
+            const command = new DownloadBucketObjectCommand_1.DownloadBucketObjectCommand({
+                bucketObject,
+                localDir: this.localDir,
+                abortSignal: this.abortSignal,
+                commandInput: this.commandInput,
+                monitor: this.monitor,
+            });
+            await command.execute(client);
+        });
+    }
+}
+exports.DownloadBucketObjectsCommand = DownloadBucketObjectsCommand;
+//# sourceMappingURL=DownloadBucketObjectsCommand.js.map
+
+/***/ }),
+
+/***/ 5739:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ListBucketObjectsCommand = void 0;
+const client_s3_1 = __nccwpck_require__(9250);
+const BucketObject_1 = __nccwpck_require__(5732);
+class ListBucketObjectsCommand {
+    bucket;
+    prefix;
+    constructor(input) {
+        this.bucket = input.bucket;
+        this.prefix = input.prefix;
+    }
+    async execute(client) {
+        const objects = [];
+        let response;
+        let nextContinuationToken;
+        do {
+            response = await client.send(new client_s3_1.ListObjectsV2Command({
+                Bucket: this.bucket,
+                Prefix: this.prefix,
+                ContinuationToken: nextContinuationToken,
+            }));
+            nextContinuationToken = response.NextContinuationToken;
+            if (response.Contents !== undefined) {
+                response.Contents.forEach(({ Key, LastModified, Size }) => {
+                    if (!Key.endsWith('/')) {
+                        objects.push(new BucketObject_1.BucketObject({
+                            id: Key,
+                            lastModified: LastModified.getTime(),
+                            size: Size,
+                            key: Key,
+                            bucket: this.bucket,
+                        }));
+                    }
+                });
+            }
+        } while (response.IsTruncated);
+        return objects;
+    }
+}
+exports.ListBucketObjectsCommand = ListBucketObjectsCommand;
+//# sourceMappingURL=ListBucketObjectsCommand.js.map
+
+/***/ }),
+
+/***/ 7767:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ListLocalObjectsCommand = void 0;
+const node_fs_1 = __nccwpck_require__(7561);
+const path = __importStar(__nccwpck_require__(9411));
+const path_1 = __nccwpck_require__(2418);
+const LocalObject_1 = __nccwpck_require__(5658);
+class ListLocalObjectsCommand {
+    directory;
+    followSymlinks;
+    constructor(input) {
+        this.directory = input.directory;
+        const noFollowSymlinks = input.noFollowSymlinks ?? false;
+        this.followSymlinks = input.followSymlinks ?? !noFollowSymlinks;
+    }
+    async execute() {
+        return this.listObjectsRecursively(this.directory);
+    }
+    async listObjectsRecursively(currentDir) {
+        let objects = [];
+        const childPaths = await node_fs_1.promises.readdir(currentDir);
+        for (const childPath of childPaths) {
+            const filePath = path.join(currentDir, childPath);
+            let stats = await node_fs_1.promises.lstat(filePath);
+            if (stats.isSymbolicLink() && this.followSymlinks) {
+                stats = await node_fs_1.promises.stat(filePath);
+            }
+            if (stats.isDirectory()) {
+                objects = objects.concat(await this.listObjectsRecursively(filePath));
+            }
+            else if (stats.isFile()) {
+                const id = (0, path_1.toPosixPath)(path.relative(this.directory, filePath));
+                objects.push(new LocalObject_1.LocalObject({
+                    id,
+                    lastModified: stats.mtimeMs,
+                    size: stats.size,
+                    path: filePath,
+                }));
+            }
+        }
+        return objects;
+    }
+}
+exports.ListLocalObjectsCommand = ListLocalObjectsCommand;
+//# sourceMappingURL=ListLocalObjectsCommand.js.map
+
+/***/ }),
+
+/***/ 602:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SyncBucketWithBucketCommand = void 0;
+const constants_1 = __nccwpck_require__(958);
+const SyncObject_1 = __nccwpck_require__(6735);
+const bucket_1 = __nccwpck_require__(463);
+const CopyBucketObjectsCommand_1 = __nccwpck_require__(3575);
+const ListBucketObjectsCommand_1 = __nccwpck_require__(5739);
+const DeleteBucketObjectsCommand_1 = __nccwpck_require__(842);
+class SyncBucketWithBucketCommand {
+    sourceBucketPrefix;
+    targetBucketPrefix;
+    dryRun;
+    del;
+    deleteExcluded;
+    sizeOnly;
+    relocations;
+    filters;
+    abortSignal;
+    commandInput;
+    monitor;
+    maxConcurrentTransfers;
+    constructor(input) {
+        this.sourceBucketPrefix = input.sourceBucketPrefix;
+        this.targetBucketPrefix = input.targetBucketPrefix;
+        this.dryRun = input.dryRun ?? false;
+        this.del = input.del ?? false;
+        this.deleteExcluded = input.deleteExcluded ?? false;
+        this.sizeOnly = input.sizeOnly ?? false;
+        this.relocations = input.relocations ?? [];
+        this.filters = input.filters ?? [];
+        this.abortSignal = input.abortSignal;
+        this.commandInput = input.commandInput;
+        this.monitor = input.monitor;
+        this.maxConcurrentTransfers =
+            input.maxConcurrentTransfers ?? constants_1.DEFAULT_MAX_CONCURRENT_TRANSFERS;
+    }
+    async execute(client) {
+        const { bucket: sourceBucket, prefix: sourcePrefix } = (0, bucket_1.parsePrefix)(this.sourceBucketPrefix);
+        const { bucket: targetBucket, prefix: targetPrefix } = (0, bucket_1.parsePrefix)(this.targetBucketPrefix);
+        const [sourceObjects, targetObjects] = await Promise.all([
+            new ListBucketObjectsCommand_1.ListBucketObjectsCommand({
+                bucket: sourceBucket,
+                prefix: sourcePrefix,
+            }).execute(client),
+            new ListBucketObjectsCommand_1.ListBucketObjectsCommand({
+                bucket: targetBucket,
+                prefix: targetPrefix,
+            }).execute(client),
+        ]);
+        if (targetPrefix !== '')
+            this.relocations = [
+                (currentPath) => `${targetPrefix}/${currentPath}`,
+                ...this.relocations,
+            ];
+        if (sourcePrefix !== '')
+            this.relocations = [
+                (currentPath) => currentPath.startsWith(`${sourcePrefix}/`)
+                    ? currentPath.replace(`${sourcePrefix}/`, '')
+                    : currentPath,
+                ...this.relocations,
+            ];
+        sourceObjects.forEach((sourceObject) => {
+            sourceObject.applyFilters(this.filters);
+            sourceObject.applyRelocations(this.relocations);
+        });
+        const diff = SyncObject_1.SyncObject.diff(sourceObjects, targetObjects, {
+            sizeOnly: this.sizeOnly,
+            deleteExcluded: this.deleteExcluded,
+        });
+        const commands = [];
+        if (!this.dryRun) {
+            commands.push(new CopyBucketObjectsCommand_1.CopyBucketObjectsCommand({
+                bucketObjects: [...diff.created, ...diff.updated],
+                targetBucket,
+                abortSignal: this.abortSignal,
+                commandInput: this.commandInput,
+                monitor: this.monitor,
+                maxConcurrentTransfers: this.maxConcurrentTransfers,
+            }).execute(client));
+        }
+        if (this.del) {
+            if (!this.dryRun) {
+                commands.push(new DeleteBucketObjectsCommand_1.DeleteBucketObjectsCommand({
+                    bucket: targetBucket,
+                    keys: diff.deleted.map((object) => object.key),
+                }).execute(client));
+            }
+        }
+        await Promise.all(commands);
+        return {
+            created: diff.created,
+            updated: diff.updated,
+            deleted: this.del ? diff.deleted : [],
+        };
+    }
+}
+exports.SyncBucketWithBucketCommand = SyncBucketWithBucketCommand;
+//# sourceMappingURL=SyncBucketWithBucketCommand.js.map
+
+/***/ }),
+
+/***/ 3904:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SyncBucketWithLocalCommand = void 0;
+const UploadLocalObjectsCommand_1 = __nccwpck_require__(7420);
+const DeleteBucketObjectsCommand_1 = __nccwpck_require__(842);
+const SyncObject_1 = __nccwpck_require__(6735);
+const bucket_1 = __nccwpck_require__(463);
+const constants_1 = __nccwpck_require__(958);
+const ListLocalObjectsCommand_1 = __nccwpck_require__(7767);
+const ListBucketObjectsCommand_1 = __nccwpck_require__(5739);
+class SyncBucketWithLocalCommand {
+    localDir;
+    bucketPrefix;
+    dryRun;
+    del;
+    deleteExcluded;
+    sizeOnly;
+    followSymlinks;
+    relocations;
+    filters;
+    abortSignal;
+    commandInput;
+    monitor;
+    maxConcurrentTransfers;
+    partSize;
+    constructor(input) {
+        this.localDir = input.localDir;
+        this.bucketPrefix = input.bucketPrefix;
+        this.dryRun = input.dryRun ?? false;
+        this.del = input.del ?? false;
+        this.deleteExcluded = input.deleteExcluded ?? false;
+        this.sizeOnly = input.sizeOnly ?? false;
+        const noFollowSymlinks = input.noFollowSymlinks ?? false;
+        this.followSymlinks = input.followSymlinks ?? !noFollowSymlinks;
+        this.relocations = input.relocations ?? [];
+        this.filters = input.filters ?? [];
+        this.abortSignal = input.abortSignal;
+        this.commandInput = input.commandInput;
+        this.monitor = input.monitor;
+        this.maxConcurrentTransfers =
+            input.maxConcurrentTransfers ?? constants_1.DEFAULT_MAX_CONCURRENT_TRANSFERS;
+        this.partSize = input.partSize ?? constants_1.DEFAULT_PART_SIZE;
+    }
+    async execute(client) {
+        const { bucket, prefix } = (0, bucket_1.parsePrefix)(this.bucketPrefix);
+        const [sourceObjects, targetObjects] = await Promise.all([
+            new ListLocalObjectsCommand_1.ListLocalObjectsCommand({
+                directory: this.localDir,
+                followSymlinks: this.followSymlinks,
+            }).execute(),
+            new ListBucketObjectsCommand_1.ListBucketObjectsCommand({ bucket, prefix }).execute(client),
+        ]);
+        if (prefix !== '')
+            this.relocations = [
+                (currentPath) => `${prefix}/${currentPath}`,
+                ...this.relocations,
+            ];
+        sourceObjects.forEach((sourceObject) => {
+            sourceObject.applyFilters(this.filters);
+            sourceObject.applyRelocations(this.relocations);
+        });
+        const diff = SyncObject_1.SyncObject.diff(sourceObjects, targetObjects, {
+            sizeOnly: this.sizeOnly,
+            deleteExcluded: this.deleteExcluded,
+        });
+        const commands = [];
+        if (!this.dryRun) {
+            commands.push(new UploadLocalObjectsCommand_1.UploadLocalObjectsCommand({
+                localObjects: [...diff.created, ...diff.updated],
+                bucket,
+                abortSignal: this.abortSignal,
+                commandInput: this.commandInput,
+                monitor: this.monitor,
+                maxConcurrentTransfers: this.maxConcurrentTransfers,
+                partSize: this.partSize,
+            }).execute(client));
+        }
+        if (this.del) {
+            if (!this.dryRun) {
+                commands.push(new DeleteBucketObjectsCommand_1.DeleteBucketObjectsCommand({
+                    bucket,
+                    keys: diff.deleted.map((object) => object.key),
+                }).execute(client));
+            }
+        }
+        await Promise.all(commands);
+        return {
+            created: diff.created,
+            updated: diff.updated,
+            deleted: this.del ? diff.deleted : [],
+        };
+    }
+}
+exports.SyncBucketWithLocalCommand = SyncBucketWithLocalCommand;
+//# sourceMappingURL=SyncBucketWithLocalCommand.js.map
+
+/***/ }),
+
+/***/ 1655:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SyncCommand = void 0;
+const SyncBucketWithBucketCommand_1 = __nccwpck_require__(602);
+const SyncBucketWithLocalCommand_1 = __nccwpck_require__(3904);
+const SyncLocalWithBucketCommand_1 = __nccwpck_require__(8861);
+class SyncCommand {
+    source;
+    target;
+    options;
+    constructor(input) {
+        const { source, target, ...options } = input;
+        this.source = source;
+        this.target = target;
+        this.options = options;
+    }
+    async execute(client) {
+        const sourceIsBucket = this.source.startsWith('s3://');
+        const targetIsBucket = this.target.startsWith('s3://');
+        if (!sourceIsBucket && !targetIsBucket) {
+            throw new Error('localDir to localDir sync is not supported, make sure to use s3:// prefix for buckets');
+        }
+        if (sourceIsBucket && targetIsBucket) {
+            return new SyncBucketWithBucketCommand_1.SyncBucketWithBucketCommand({
+                sourceBucketPrefix: this.source.substring(5),
+                targetBucketPrefix: this.target.substring(5),
+                ...this.options,
+            }).execute(client);
+        }
+        if (sourceIsBucket && !targetIsBucket) {
+            return new SyncLocalWithBucketCommand_1.SyncLocalWithBucketCommand({
+                bucketPrefix: this.source.substring(5),
+                localDir: this.target,
+                ...this.options,
+            }).execute(client);
+        }
+        return new SyncBucketWithLocalCommand_1.SyncBucketWithLocalCommand({
+            localDir: this.source,
+            bucketPrefix: this.target.substring(5),
+            ...this.options,
+        }).execute(client);
+    }
+}
+exports.SyncCommand = SyncCommand;
+//# sourceMappingURL=SyncCommand.js.map
+
+/***/ }),
+
+/***/ 8861:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SyncLocalWithBucketCommand = void 0;
+const node_fs_1 = __nccwpck_require__(7561);
+const constants_1 = __nccwpck_require__(958);
+const DownloadBucketObjectsCommand_1 = __nccwpck_require__(5981);
+const SyncObject_1 = __nccwpck_require__(6735);
+const bucket_1 = __nccwpck_require__(463);
+const ListBucketObjectsCommand_1 = __nccwpck_require__(5739);
+const ListLocalObjectsCommand_1 = __nccwpck_require__(7767);
+class SyncLocalWithBucketCommand {
+    bucketPrefix;
+    localDir;
+    dryRun;
+    del;
+    deleteExcluded;
+    sizeOnly;
+    followSymlinks;
+    relocations;
+    filters;
+    abortSignal;
+    commandInput;
+    monitor;
+    maxConcurrentTransfers;
+    constructor(input) {
+        this.bucketPrefix = input.bucketPrefix;
+        this.localDir = input.localDir;
+        this.dryRun = input.dryRun ?? false;
+        this.del = input.del ?? false;
+        this.deleteExcluded = input.deleteExcluded ?? false;
+        this.sizeOnly = input.sizeOnly ?? false;
+        const noFollowSymlinks = input.noFollowSymlinks ?? false;
+        this.followSymlinks = input.followSymlinks ?? !noFollowSymlinks;
+        this.relocations = input.relocations ?? [];
+        this.filters = input.filters ?? [];
+        this.abortSignal = input.abortSignal;
+        this.commandInput = input.commandInput;
+        this.monitor = input.monitor;
+        this.maxConcurrentTransfers =
+            input.maxConcurrentTransfers ?? constants_1.DEFAULT_MAX_CONCURRENT_TRANSFERS;
+    }
+    async execute(client) {
+        const { bucket, prefix } = (0, bucket_1.parsePrefix)(this.bucketPrefix);
+        await node_fs_1.promises.mkdir(this.localDir, { recursive: true });
+        const [sourceObjects, targetObjects] = await Promise.all([
+            new ListBucketObjectsCommand_1.ListBucketObjectsCommand({ bucket, prefix }).execute(client),
+            new ListLocalObjectsCommand_1.ListLocalObjectsCommand({
+                directory: this.localDir,
+                followSymlinks: this.followSymlinks,
+            }).execute(),
+        ]);
+        if (prefix !== '')
+            this.relocations = [
+                (currentPath) => currentPath.startsWith(`${prefix}/`)
+                    ? currentPath.replace(`${prefix}/`, '')
+                    : currentPath,
+                ...this.relocations,
+            ];
+        sourceObjects.forEach((sourceObject) => {
+            sourceObject.applyFilters(this.filters);
+            sourceObject.applyRelocations(this.relocations);
+        });
+        const diff = SyncObject_1.SyncObject.diff(sourceObjects, targetObjects, {
+            sizeOnly: this.sizeOnly,
+            deleteExcluded: this.deleteExcluded,
+        });
+        const commands = [];
+        if (!this.dryRun) {
+            commands.push(new DownloadBucketObjectsCommand_1.DownloadBucketObjectsCommand({
+                bucketObjects: [...diff.created, ...diff.updated],
+                localDir: this.localDir,
+                abortSignal: this.abortSignal,
+                commandInput: this.commandInput,
+                monitor: this.monitor,
+                maxConcurrentTransfers: this.maxConcurrentTransfers,
+            }).execute(client));
+        }
+        if (this.del) {
+            if (!this.dryRun) {
+                commands.push(Promise.all(diff.deleted.map((object) => node_fs_1.promises.unlink(object.path))));
+            }
+        }
+        await Promise.all(commands);
+        return {
+            created: diff.created,
+            updated: diff.updated,
+            deleted: this.del ? diff.deleted : [],
+        };
+    }
+}
+exports.SyncLocalWithBucketCommand = SyncLocalWithBucketCommand;
+//# sourceMappingURL=SyncLocalWithBucketCommand.js.map
+
+/***/ }),
+
+/***/ 5445:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.UploadLocalObjectCommand = void 0;
+const client_s3_1 = __nccwpck_require__(9250);
+const node_fs_1 = __importDefault(__nccwpck_require__(7561));
+const Command_1 = __nccwpck_require__(6233);
+class UploadLocalObjectCommand {
+    localObject;
+    bucket;
+    abortSignal;
+    commandInput;
+    monitor;
+    constructor(input) {
+        this.localObject = input.localObject;
+        this.bucket = input.bucket;
+        this.abortSignal = input.abortSignal;
+        this.commandInput = input.commandInput;
+        this.monitor = input.monitor;
+    }
+    async execute(client) {
+        const stream = node_fs_1.default.createReadStream(this.localObject.path);
+        const putObjectCommandInput = (0, Command_1.mergeInput)({
+            Bucket: this.bucket,
+            Key: this.localObject.id,
+            Body: stream,
+            ContentLength: this.localObject.size,
+        }, this.commandInput);
+        if (this.monitor) {
+            stream.on('data', (data) => {
+                this.monitor.emit('size', data.length);
+            });
+            stream.pause();
+            stream.on('end', () => {
+                this.monitor.emit('object');
+            });
+        }
+        await Promise.all([
+            new Promise((resolve, reject) => {
+                stream.on('error', reject);
+                stream.on('end', resolve);
+            }),
+            client.send(new client_s3_1.PutObjectCommand(putObjectCommandInput), {
+                abortSignal: this.abortSignal,
+            }),
+        ]);
+    }
+}
+exports.UploadLocalObjectCommand = UploadLocalObjectCommand;
+//# sourceMappingURL=UploadLocalObjectCommand.js.map
+
+/***/ }),
+
+/***/ 8314:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.UploadLocalObjectPartCommand = void 0;
+const client_s3_1 = __nccwpck_require__(9250);
+const node_fs_1 = __importDefault(__nccwpck_require__(7561));
+const Command_1 = __nccwpck_require__(6233);
+class UploadLocalObjectPartCommand {
+    localObject;
+    startOffset;
+    endOffset;
+    partNumber;
+    uploadId;
+    bucket;
+    abortSignal;
+    monitor;
+    commandInput;
+    constructor(input) {
+        this.localObject = input.localObject;
+        this.startOffset = input.startOffset;
+        this.endOffset = input.endOffset;
+        this.partNumber = input.partNumber;
+        this.uploadId = input.uploadId;
+        this.bucket = input.bucket;
+        this.abortSignal = input.abortSignal;
+        this.monitor = input.monitor;
+        this.commandInput = input.commandInput;
+    }
+    async execute(client) {
+        const stream = node_fs_1.default.createReadStream(this.localObject.path, {
+            start: this.startOffset,
+            end: this.endOffset,
+        });
+        const uploadPartCommandInput = (0, Command_1.mergeInput)({
+            Bucket: this.bucket,
+            Key: this.localObject.id,
+            UploadId: this.uploadId,
+            PartNumber: this.partNumber,
+            Body: stream,
+            ContentLength: this.endOffset - this.startOffset + 1,
+        }, this.commandInput);
+        if (this.monitor) {
+            stream.on('data', (data) => {
+                this.monitor.emit('size', data.length);
+            });
+            stream.pause();
+            stream.on('end', () => {
+                this.monitor.emit('object');
+            });
+        }
+        const [, result] = await Promise.all([
+            new Promise((resolve, reject) => {
+                stream.on('error', reject);
+                stream.on('end', resolve);
+            }),
+            client.send(new client_s3_1.UploadPartCommand(uploadPartCommandInput), {
+                abortSignal: this.abortSignal,
+            }),
+        ]);
+        return {
+            eTag: result.ETag,
+            partNumber: this.partNumber,
+        };
+    }
+}
+exports.UploadLocalObjectPartCommand = UploadLocalObjectPartCommand;
+//# sourceMappingURL=UploadLocalObjectPartCommand.js.map
+
+/***/ }),
+
+/***/ 7420:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.UploadLocalObjectsCommand = void 0;
+const async_1 = __nccwpck_require__(603);
+const constants_1 = __nccwpck_require__(958);
+const UploadLocalObjectCommand_1 = __nccwpck_require__(5445);
+const CreateMultipartLocalObjectUploadCommand_1 = __nccwpck_require__(4967);
+const UploadLocalObjectPartCommand_1 = __nccwpck_require__(8314);
+const CompleteMultipartLocalObjectCommand_1 = __nccwpck_require__(1506);
+class UploadLocalObjectsCommand {
+    localObjects;
+    bucket;
+    abortSignal;
+    commandInput;
+    monitor;
+    maxConcurrentTransfers;
+    partSize;
+    constructor(input) {
+        this.localObjects = input.localObjects;
+        this.bucket = input.bucket;
+        this.abortSignal = input.abortSignal;
+        this.commandInput = input.commandInput;
+        this.monitor = input.monitor;
+        this.maxConcurrentTransfers =
+            input.maxConcurrentTransfers ?? constants_1.DEFAULT_MAX_CONCURRENT_TRANSFERS;
+        this.partSize = input.partSize ?? constants_1.DEFAULT_PART_SIZE;
+    }
+    async execute(client) {
+        if (this.monitor) {
+            const totalDataSize = this.localObjects.reduce((total, localObject) => total + localObject.size, 0);
+            this.monitor.emit('metadata', totalDataSize, this.localObjects.length);
+        }
+        const uploadOps = [];
+        this.localObjects.forEach((localObject) => {
+            if (localObject.size > this.partSize) {
+                uploadOps.push(...this.deferMultipartUpload(client, localObject));
+            }
+            else {
+                uploadOps.push(this.deferDirectUpload(client, localObject));
+            }
+        });
+        await (0, async_1.asyncMap)(uploadOps, this.maxConcurrentTransfers, async (uploadOp) => uploadOp());
+    }
+    deferDirectUpload(client, localObject) {
+        return async () => {
+            const command = new UploadLocalObjectCommand_1.UploadLocalObjectCommand({
+                localObject,
+                bucket: this.bucket,
+                abortSignal: this.abortSignal,
+                commandInput: this.commandInput,
+                monitor: this.monitor,
+            });
+            await command.execute(client);
+        };
+    }
+    deferMultipartUpload(client, localObject) {
+        const deferredCommands = [];
+        const createMultipartUploadCommand = new Promise((resolve) => {
+            deferredCommands.push(async () => {
+                const command = new CreateMultipartLocalObjectUploadCommand_1.CreateMultipartLocalObjectUploadCommand({
+                    localObject,
+                    bucket: this.bucket,
+                    commandInput: this.commandInput,
+                });
+                resolve(command.execute(client));
+            });
+        });
+        const partOffsets = [];
+        for (let i = 0; i < localObject.size; i += this.partSize) {
+            partOffsets.push({
+                start: i,
+                end: Math.min(i + this.partSize - 1, localObject.size - 1),
+            });
+        }
+        const uploadPartCommands = Promise.all(partOffsets.map((partOffset, index) => new Promise((resolve) => {
+            deferredCommands.push(async () => {
+                const command = new UploadLocalObjectPartCommand_1.UploadLocalObjectPartCommand({
+                    localObject,
+                    startOffset: partOffset.start,
+                    endOffset: partOffset.end,
+                    partNumber: index + 1,
+                    uploadId: await createMultipartUploadCommand,
+                    bucket: this.bucket,
+                    abortSignal: this.abortSignal,
+                    monitor: this.monitor,
+                });
+                resolve(command.execute(client));
+            });
+        })));
+        deferredCommands.push(async () => {
+            const command = new CompleteMultipartLocalObjectCommand_1.CompleteMultipartLocalObjectCommand({
+                localObject,
+                bucket: this.bucket,
+                uploadId: await createMultipartUploadCommand,
+                parts: await uploadPartCommands,
+            });
+            await command.execute(client);
+        });
+        return deferredCommands;
+    }
+}
+exports.UploadLocalObjectsCommand = UploadLocalObjectsCommand;
+//# sourceMappingURL=UploadLocalObjectsCommand.js.map
+
+/***/ }),
+
+/***/ 958:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.DEFAULT_PART_SIZE = exports.DEFAULT_MAX_CONCURRENT_TRANSFERS = void 0;
+exports.DEFAULT_MAX_CONCURRENT_TRANSFERS = 10;
+exports.DEFAULT_PART_SIZE = 1024 * 1024 * 5;
+//# sourceMappingURL=constants.js.map
+
+/***/ }),
+
+/***/ 5732:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.BucketObject = void 0;
+const SyncObject_1 = __nccwpck_require__(6735);
+class BucketObject extends SyncObject_1.SyncObject {
+    bucket;
+    key;
+    constructor(options) {
+        super(options);
+        this.bucket = options.bucket;
+        this.key = options.key;
+    }
+}
+exports.BucketObject = BucketObject;
+//# sourceMappingURL=BucketObject.js.map
+
+/***/ }),
+
+/***/ 5658:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.LocalObject = void 0;
+const SyncObject_1 = __nccwpck_require__(6735);
+class LocalObject extends SyncObject_1.SyncObject {
+    path;
+    constructor(options) {
+        super(options);
+        this.path = options.path;
+    }
+}
+exports.LocalObject = LocalObject;
+//# sourceMappingURL=LocalObject.js.map
+
+/***/ }),
+
+/***/ 6735:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.SyncObject = void 0;
+class SyncObject {
+    id;
+    size;
+    lastModified;
+    isExcluded = false;
+    constructor(options) {
+        this.id = options.id;
+        this.size = options.size;
+        this.lastModified = options.lastModified;
+    }
+    static diff(sourceObjects, targetObjects, options) {
+        const sourceObjectMap = new Map(sourceObjects.map((sourceObject) => [sourceObject.id, sourceObject]));
+        const targetObjectMap = new Map(targetObjects.map((targetObject) => [targetObject.id, targetObject]));
+        const created = [];
+        const updated = [];
+        sourceObjectMap.forEach((sourceObject) => {
+            if (!sourceObject.isIncluded)
+                return;
+            const targetObject = targetObjectMap.get(sourceObject.id);
+            if (targetObject === undefined) {
+                created.push(sourceObject);
+            }
+            else if (sourceObject.size !== targetObject.size ||
+                (options?.sizeOnly !== true &&
+                    sourceObject.lastModified > targetObject.lastModified)) {
+                updated.push(sourceObject);
+            }
+        });
+        const deleted = [];
+        targetObjectMap.forEach((targetObject) => {
+            const sourceObject = sourceObjectMap.get(targetObject.id);
+            if (sourceObject === undefined ||
+                (!sourceObject.isIncluded && options?.deleteExcluded === true)) {
+                deleted.push(targetObject);
+            }
+        });
+        return { created, updated, deleted };
+    }
+    get isIncluded() {
+        return !this.isExcluded;
+    }
+    applyFilters(filters) {
+        filters.forEach(({ include, exclude }) => {
+            if (!this.isExcluded && exclude != null) {
+                this.isExcluded = exclude(this.id);
+            }
+            if (this.isExcluded && include) {
+                this.isExcluded = !include(this.id);
+            }
+        });
+    }
+    applyLegacyRelocation(sourcePrefix, targetPrefix) {
+        if (sourcePrefix === '' && targetPrefix !== '') {
+            this.id = `${targetPrefix}/${this.id}`;
+        }
+        if (this.id.startsWith(`${sourcePrefix}/`)) {
+            if (targetPrefix === '') {
+                this.id = this.id.slice(sourcePrefix.length + 1);
+            }
+            this.id = this.id.replace(sourcePrefix, targetPrefix);
+        }
+    }
+    applyRelocation(relocation) {
+        if (Array.isArray(relocation)) {
+            this.applyLegacyRelocation(...relocation);
+        }
+        else {
+            this.id = relocation(this.id);
+        }
+    }
+    applyRelocations(relocations) {
+        relocations.forEach((relocation) => {
+            this.applyRelocation(relocation);
+        });
+    }
+}
+exports.SyncObject = SyncObject;
+//# sourceMappingURL=SyncObject.js.map
+
+/***/ }),
+
+/***/ 603:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.asyncMap = void 0;
+async function asyncMap(iterable, limit, asyncFn) {
+    const results = [];
+    let currentIndex = limit;
+    await Promise.all(iterable.slice(0, limit).map(async (item, i) => {
+        results[i] = await asyncFn(item, i);
+        while (currentIndex < iterable.length) {
+            currentIndex += 1;
+            results[currentIndex - 1] = await asyncFn(iterable[currentIndex - 1], currentIndex - 1);
+        }
+    }));
+    return results;
+}
+exports.asyncMap = asyncMap;
+//# sourceMappingURL=async.js.map
+
+/***/ }),
+
+/***/ 463:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.parsePrefix = void 0;
+function parsePrefix(bucketPrefix) {
+    const [bucket, ...prefixTokens] = bucketPrefix.split('/');
+    const prefix = prefixTokens.join('/');
+    return { bucket, prefix };
+}
+exports.parsePrefix = parsePrefix;
+//# sourceMappingURL=bucket.js.map
+
+/***/ }),
+
+/***/ 2418:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.toLocalPath = exports.toPosixPath = void 0;
+const node_path_1 = __importDefault(__nccwpck_require__(9411));
+function toPosixPath(filePath) {
+    return filePath.split(node_path_1.default.sep).join(node_path_1.default.posix.sep);
+}
+exports.toPosixPath = toPosixPath;
+function toLocalPath(filePath) {
+    return filePath.split(node_path_1.default.posix.sep).join(node_path_1.default.sep);
+}
+exports.toLocalPath = toLocalPath;
+//# sourceMappingURL=path.js.map
+
+/***/ }),
+
+/***/ 128:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const S3SyncClient_1 = __nccwpck_require__(2201);
+__exportStar(__nccwpck_require__(2201), exports);
+__exportStar(__nccwpck_require__(4502), exports);
+__exportStar(__nccwpck_require__(6233), exports);
+__exportStar(__nccwpck_require__(1506), exports);
+__exportStar(__nccwpck_require__(7817), exports);
+__exportStar(__nccwpck_require__(3575), exports);
+__exportStar(__nccwpck_require__(4967), exports);
+__exportStar(__nccwpck_require__(842), exports);
+__exportStar(__nccwpck_require__(2313), exports);
+__exportStar(__nccwpck_require__(5981), exports);
+__exportStar(__nccwpck_require__(5739), exports);
+__exportStar(__nccwpck_require__(7767), exports);
+__exportStar(__nccwpck_require__(602), exports);
+__exportStar(__nccwpck_require__(3904), exports);
+__exportStar(__nccwpck_require__(8861), exports);
+__exportStar(__nccwpck_require__(5445), exports);
+__exportStar(__nccwpck_require__(8314), exports);
+__exportStar(__nccwpck_require__(7420), exports);
+__exportStar(__nccwpck_require__(5732), exports);
+__exportStar(__nccwpck_require__(5658), exports);
+__exportStar(__nccwpck_require__(6735), exports);
+exports["default"] = S3SyncClient_1.S3SyncClient;
+//# sourceMappingURL=index.js.map
+
+/***/ }),
+
 /***/ 2043:
 /***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
@@ -93702,7 +95100,9 @@ var Inputs;
     Inputs["UploadChunkSize"] = "upload-chunk-size";
     Inputs["EnableCrossOsArchive"] = "enableCrossOsArchive";
     Inputs["FailOnCacheMiss"] = "fail-on-cache-miss";
-    Inputs["LookupOnly"] = "lookup-only"; // Input for cache, restore action
+    Inputs["LookupOnly"] = "lookup-only";
+    Inputs["NoCompression"] = "no-compression";
+    Inputs["Sync"] = "sync"; // Input for cache, save action
 })(Inputs = exports.Inputs || (exports.Inputs = {}));
 var Outputs;
 (function (Outputs) {
@@ -93764,7 +95164,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.saveCache = exports.downloadCache = exports.getCacheEntry = exports.getCacheVersion = void 0;
+exports.saveCacheSync = exports.saveCache = exports.downloadCacheSync = exports.downloadCache = exports.getCacheEntrySync = exports.getCacheEntry = exports.getCacheVersion = void 0;
 const client_s3_1 = __nccwpck_require__(9250);
 const { getSignedUrl } = __nccwpck_require__(5052);
 const fs_1 = __nccwpck_require__(7147);
@@ -93773,6 +95173,7 @@ const core = __importStar(__nccwpck_require__(2186));
 const utils = __importStar(__nccwpck_require__(1518));
 const lib_storage_1 = __nccwpck_require__(3087);
 const downloadUtils_1 = __nccwpck_require__(6968);
+const s3_sync_client_1 = __nccwpck_require__(128);
 // if executing from RunsOn, unset any existing AWS env variables so that we can use the IAM instance profile for credentials
 // see unsetCredentials() in https://github.com/aws-actions/configure-aws-credentials/blob/v4.0.2/src/helpers.ts#L44
 if (process.env.RUNS_ON_RUNNER_NAME && process.env.RUNS_ON_RUNNER_NAME !== "") {
@@ -93819,15 +95220,23 @@ function getS3Prefix(paths, { compressionMethod, enableCrossOsArchive }) {
     const version = getCacheVersion(paths, compressionMethod, enableCrossOsArchive);
     return ["cache", repository, version].join("/");
 }
-function getCacheEntry(keys, paths, { compressionMethod, enableCrossOsArchive }) {
+function getS3PrefixSync(paths) {
+    const repository = process.env.GITHUB_REPOSITORY;
+    const version = getCacheVersion(paths);
+    return ["cache", repository, version].join("/");
+}
+function getCacheEntry(keys, paths, { compressionMethod, enableCrossOsArchive }, isSync = false) {
     return __awaiter(this, void 0, void 0, function* () {
         const cacheEntry = {};
         // Find the most recent key matching one of the restoreKeys prefixes
         for (const restoreKey of keys) {
-            const s3Prefix = getS3Prefix(paths, {
+            let s3Prefix = getS3Prefix(paths, {
                 compressionMethod,
                 enableCrossOsArchive
             });
+            if (isSync) {
+                s3Prefix = getS3PrefixSync(paths);
+            }
             const listObjectsParams = {
                 Bucket: bucketName,
                 Prefix: [s3Prefix, restoreKey].join("/")
@@ -93851,6 +95260,33 @@ function getCacheEntry(keys, paths, { compressionMethod, enableCrossOsArchive })
     });
 }
 exports.getCacheEntry = getCacheEntry;
+function getCacheEntrySync(key, paths) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const cacheEntry = {};
+        // Find the most recent key matching one of the restoreKeys prefixes
+        const s3Prefix = getS3PrefixSync(paths);
+        const listObjectsParams = {
+            Bucket: bucketName,
+            Prefix: [s3Prefix, key].join("/")
+        };
+        try {
+            const { Contents = [] } = yield s3Client.send(new client_s3_1.ListObjectsV2Command(listObjectsParams));
+            if (Contents.length > 0) {
+                // Sort keys by LastModified time in descending order
+                const sortedKeys = Contents.sort((a, b) => Number(b.LastModified) - Number(a.LastModified));
+                const s3Path = sortedKeys[0].Key; // Return the most recent key
+                cacheEntry.cacheKey = s3Path === null || s3Path === void 0 ? void 0 : s3Path.replace(`${s3Prefix}/`, "");
+                cacheEntry.archiveLocation = `s3://${bucketName}/${s3Path}`;
+                return cacheEntry;
+            }
+        }
+        catch (error) {
+            console.error(`Error listing objects with prefix ${key} in bucket ${bucketName}:`, error);
+        }
+        return cacheEntry; // No keys found
+    });
+}
+exports.getCacheEntrySync = getCacheEntrySync;
 function downloadCache(archiveLocation, archivePath, options) {
     return __awaiter(this, void 0, void 0, function* () {
         if (!bucketName) {
@@ -93872,6 +95308,22 @@ function downloadCache(archiveLocation, archivePath, options) {
     });
 }
 exports.downloadCache = downloadCache;
+function downloadCacheSync(s3SyncLocation, finalPaths) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!bucketName) {
+            throw new Error("Environment variable RUNS_ON_S3_BUCKET_CACHE not set");
+        }
+        if (!region) {
+            throw new Error("Environment variable RUNS_ON_AWS_REGION not set");
+        }
+        const { sync } = new s3_sync_client_1.S3SyncClient({ client: s3Client });
+        for (const path of finalPaths) {
+            const s3Path = `${s3SyncLocation}/${path}`;
+            yield sync(s3Path, path);
+        }
+    });
+}
+exports.downloadCacheSync = downloadCacheSync;
 function saveCache(key, paths, archivePath, { compressionMethod, enableCrossOsArchive, cacheSize: archiveFileSize }) {
     return __awaiter(this, void 0, void 0, function* () {
         if (!bucketName) {
@@ -93910,6 +95362,38 @@ function saveCache(key, paths, archivePath, { compressionMethod, enableCrossOsAr
     });
 }
 exports.saveCache = saveCache;
+function saveCacheSync(key, paths) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!bucketName) {
+            throw new Error("Environment variable RUNS_ON_S3_BUCKET_CACHE not set");
+        }
+        if (!region) {
+            throw new Error("Environment variable RUNS_ON_AWS_REGION not set");
+        }
+        const { sync } = new s3_sync_client_1.S3SyncClient({ client: s3Client });
+        const s3Prefix = getS3PrefixSync(paths);
+        const s3Key = `${s3Prefix}/${key}`;
+        for (const path of paths) {
+            const s3Path = `${s3Key}/${path}`;
+            yield sync(path, s3Path);
+        }
+        // Commit Cache
+        // const cacheSize = utils.getArchiveFileSizeInBytes(archivePath);
+        // core.info(
+        //     `Cache Size: ~${Math.round(
+        //         cacheSize / (1024 * 1024)
+        //     )} MB (${cacheSize} B)`
+        // );
+        // const totalParts = Math.ceil(cacheSize / uploadPartSize);
+        // core.info(`Uploading cache from ${archivePath} to ${bucketName}/${s3Key}`);
+        // multipartUpload.on("httpUploadProgress", progress => {
+        //     core.info(`Uploaded part ${progress.part}/${totalParts}.`);
+        // });
+        // await multipartUpload.done();
+        core.info(`Cache saved successfully.`);
+    });
+}
+exports.saveCacheSync = saveCacheSync;
 
 
 /***/ }),
@@ -93953,12 +95437,13 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.saveCache = exports.restoreCache = exports.isFeatureAvailable = exports.ReserveCacheError = exports.ValidationError = void 0;
+exports.saveCache = exports.restoreCacheSync = exports.restoreCache = exports.isFeatureAvailable = exports.ReserveCacheError = exports.ValidationError = void 0;
 const core = __importStar(__nccwpck_require__(2186));
 const path = __importStar(__nccwpck_require__(1017));
 const utils = __importStar(__nccwpck_require__(1518));
 const cacheHttpClient = __importStar(__nccwpck_require__(9268));
 const tar_1 = __nccwpck_require__(6490);
+const child_process_1 = __nccwpck_require__(2081);
 class ValidationError extends Error {
     constructor(message) {
         super(message);
@@ -94074,6 +95559,51 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
 }
 exports.restoreCache = restoreCache;
 /**
+ * Restores cache from primary key using s3 sync
+ *
+ * @param paths a list of file paths to restore from the cache
+ * @param primaryKey an explicit key for restoring the cache
+ * @param restoreKeys an optional ordered list of keys to use for restoring the cache if no cache hit occurred for key
+ * @param downloadOptions cache download options
+ * @param enableCrossOsArchive an optional boolean enabled to restore on windows any cache created on any platform
+ * @returns string returns the key for the cache hit, otherwise returns undefined
+ */
+function restoreCacheSync(paths, primaryKey, options) {
+    return __awaiter(this, void 0, void 0, function* () {
+        checkPaths(paths);
+        core.debug("Resolved Keys:");
+        checkKey(primaryKey);
+        try {
+            // path are needed to compute version
+            const cacheEntry = yield cacheHttpClient.getCacheEntrySync(primaryKey, paths);
+            if (!(cacheEntry === null || cacheEntry === void 0 ? void 0 : cacheEntry.archiveLocation)) {
+                // Cache not found
+                return undefined;
+            }
+            if (options === null || options === void 0 ? void 0 : options.lookupOnly) {
+                core.info("Lookup only - skipping download");
+                return cacheEntry.cacheKey;
+            }
+            // Download the cache from the cache entry
+            yield cacheHttpClient.downloadCacheSync(cacheEntry.archiveLocation, paths);
+            core.info("Cache restored successfully");
+            return cacheEntry.cacheKey;
+        }
+        catch (error) {
+            const typedError = error;
+            if (typedError.name === ValidationError.name) {
+                throw error;
+            }
+            else {
+                // Supress all non-validation cache related errors because caching should be optional
+                core.warning(`Failed to restore: ${error.message}`);
+            }
+        }
+        return undefined;
+    });
+}
+exports.restoreCacheSync = restoreCacheSync;
+/**
  * Saves a list of files with the specified key
  *
  * @param paths a list of file paths to be cached
@@ -94082,7 +95612,7 @@ exports.restoreCache = restoreCache;
  * @param options cache upload options
  * @returns number returns cacheId if the cache was saved successfully and throws an error if save fails
  */
-function saveCache(paths, key, options, enableCrossOsArchive = false) {
+function saveCache(paths, key, options, enableCrossOsArchive = false, sync = false, noCompression = true) {
     return __awaiter(this, void 0, void 0, function* () {
         checkPaths(paths);
         checkKey(key);
@@ -94098,17 +95628,36 @@ function saveCache(paths, key, options, enableCrossOsArchive = false) {
         const archivePath = path.join(archiveFolder, utils.getCacheFileName(compressionMethod));
         core.debug(`Archive Path: ${archivePath}`);
         try {
-            yield (0, tar_1.createTar)(archiveFolder, cachePaths, compressionMethod);
-            if (core.isDebug()) {
-                yield (0, tar_1.listTar)(archivePath, compressionMethod);
+            if (sync) {
+                // const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
+                yield cacheHttpClient.saveCacheSync(key, paths);
             }
-            const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
-            core.debug(`File Size: ${archiveFileSize}`);
-            yield cacheHttpClient.saveCache(key, paths, archivePath, {
-                compressionMethod,
-                enableCrossOsArchive,
-                cacheSize: archiveFileSize
-            });
+            else {
+                if (noCompression) {
+                    // Create uncompressed tar archive
+                    const first = true;
+                    for (const cachePath of cachePaths) {
+                        let command = `tar -rf ${archivePath} -C ${cachePath} .`;
+                        if (first) {
+                            // Create a new archive
+                            command = `tar -cf ${archivePath} -C ${cachePath} .`;
+                        }
+                        (0, child_process_1.execSync)(command);
+                    }
+                }
+                else
+                    yield (0, tar_1.createTar)(archiveFolder, cachePaths, compressionMethod);
+                if (core.isDebug()) {
+                    yield (0, tar_1.listTar)(archivePath, compressionMethod);
+                }
+                const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
+                core.debug(`File Size: ${archiveFileSize}`);
+                yield cacheHttpClient.saveCache(key, paths, archivePath, {
+                    compressionMethod,
+                    enableCrossOsArchive,
+                    cacheSize: archiveFileSize
+                });
+            }
             // dummy cacheId, if we get there without raising, it means the cache has been saved
             cacheId = 1;
         }
@@ -94498,11 +96047,13 @@ function saveImpl(stateProvider) {
                 required: true
             });
             const enableCrossOsArchive = utils.getInputAsBool(constants_1.Inputs.EnableCrossOsArchive);
+            const sync = utils.getInputAsBool(constants_1.Inputs.Sync);
+            const noCompression = utils.getInputAsBool(constants_1.Inputs.NoCompression);
             if (canSaveToS3) {
                 core.info("The cache action detected a local S3 bucket cache. Using it.");
                 cacheId = yield custom.saveCache(cachePaths, primaryKey, {
                     uploadChunkSize: utils.getInputAsInt(constants_1.Inputs.UploadChunkSize)
-                }, enableCrossOsArchive);
+                }, enableCrossOsArchive, sync, noCompression);
             }
             else {
                 cacheId = yield cache.saveCache(cachePaths, primaryKey, {
@@ -94833,6 +96384,30 @@ module.exports = require("https");
 
 "use strict";
 module.exports = require("net");
+
+/***/ }),
+
+/***/ 5673:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:events");
+
+/***/ }),
+
+/***/ 7561:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:fs");
+
+/***/ }),
+
+/***/ 9411:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:path");
 
 /***/ }),
 

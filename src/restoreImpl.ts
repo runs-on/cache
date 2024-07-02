@@ -25,8 +25,7 @@ export async function restoreImpl(
         // Validate inputs, this can cause task failure
         if (!utils.isValidEvent()) {
             utils.logWarning(
-                `Event Validation Error: The event type ${
-                    process.env[Events.Key]
+                `Event Validation Error: The event type ${process.env[Events.Key]
                 } is not supported because it's not tied to a branch or tag ref.`
             );
             return;
@@ -45,6 +44,8 @@ export async function restoreImpl(
         const failOnCacheMiss = utils.getInputAsBool(Inputs.FailOnCacheMiss);
         const lookupOnly = utils.getInputAsBool(Inputs.LookupOnly);
 
+        const isSync = utils.getInputAsBool(Inputs.Sync);
+
         let cacheKey: string | undefined;
 
         if (canSaveToS3) {
@@ -55,7 +56,8 @@ export async function restoreImpl(
                 cachePaths,
                 primaryKey,
                 restoreKeys,
-                { lookupOnly: lookupOnly }
+                { lookupOnly: lookupOnly },
+                isSync
             );
         } else {
             cacheKey = await cache.restoreCache(
