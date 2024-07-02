@@ -313,7 +313,7 @@ export async function saveCacheSync(
     const s3Key = `${s3Prefix}/${key}`;
 
     for (const path of paths) {
-        const s3Path = `${s3Key}/${path}`;
+        const s3Path = `s3://${bucketName}/${s3Key}/${path}`;
         await sync(path, s3Path);
     }
 
