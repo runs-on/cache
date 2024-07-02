@@ -11,6 +11,8 @@ import {
 } from "@actions/cache/lib/internal/tar";
 import { DownloadOptions, UploadOptions } from "@actions/cache/lib/options";
 import { execSync } from "child_process";
+import { getCacheFileName, getCompressionMethod } from "../utils/actionUtils";
+import { CompressionMethod } from "@actions/cache/lib/internal/constants";
 
 export class ValidationError extends Error {
     constructor(message: string) {
@@ -75,7 +77,8 @@ export async function restoreCache(
     primaryKey: string,
     restoreKeys?: string[],
     options?: DownloadOptions,
-    enableCrossOsArchive = false
+    enableCrossOsArchive = false,
+    noCompression = false
 ): Promise<string | undefined> {
     checkPaths(paths);
 
@@ -94,7 +97,7 @@ export async function restoreCache(
         checkKey(key);
     }
 
-    const compressionMethod = await utils.getCompressionMethod();
+    const compressionMethod = await getCompressionMethod(noCompression);
     let archivePath = "";
     try {
         // path are needed to compute version
@@ -114,7 +117,7 @@ export async function restoreCache(
 
         archivePath = path.join(
             await utils.createTempDirectory(),
-            utils.getCacheFileName(compressionMethod)
+            getCacheFileName(compressionMethod)
         );
         core.debug(`Archive Path: ${archivePath}`);
 
@@ -126,7 +129,11 @@ export async function restoreCache(
         );
 
         if (core.isDebug()) {
-            await listTar(archivePath, compressionMethod);
+            if (noCompression) {
+                core.debug("ListTar unavailable with No compression method");
+            } else {
+                await listTar(archivePath, compressionMethod as CompressionMethod);
+            }
         }
 
         const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
@@ -136,7 +143,17 @@ export async function restoreCache(
             )} MB (${archiveFileSize} B)`
         );
 
-        await extractTar(archivePath, compressionMethod);
+        if (noCompression) {
+            const command = `tar -xf ${archivePath} -P -C ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`;
+            core.debug(`Extracting ${archivePath} to ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`);
+            const output = execSync(command);
+            if (output && output.length > 0) {
+                core.debug(output.toString());
+            }
+        }
+        else {
+            await extractTar(archivePath, compressionMethod as CompressionMethod);
+        }
         core.info("Cache restored successfully");
 
         return cacheEntry.cacheKey;
@@ -236,7 +253,7 @@ export async function saveCache(
     checkPaths(paths);
     checkKey(key);
 
-    const compressionMethod = await utils.getCompressionMethod();
+    const compressionMethod = await getCompressionMethod(noCompression);
     let cacheId = -1;
 
     const cachePaths = await utils.resolvePaths(paths);
@@ -252,7 +269,7 @@ export async function saveCache(
     const archiveFolder = await utils.createTempDirectory();
     const archivePath = path.join(
         archiveFolder,
-        utils.getCacheFileName(compressionMethod)
+        getCacheFileName(compressionMethod)
     );
 
     core.debug(`Archive Path: ${archivePath}`);
@@ -281,10 +298,10 @@ export async function saveCache(
                 }
             }
             else {
-                await createTar(archiveFolder, cachePaths, compressionMethod);
-            }
-            if (core.isDebug()) {
-                await listTar(archivePath, compressionMethod);
+                await createTar(archiveFolder, cachePaths, compressionMethod as CompressionMethod);
+                if (core.isDebug()) {
+                    await listTar(archivePath, compressionMethod as CompressionMethod);
+                }
             }
             const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
             core.debug(`File Size: ${archiveFileSize}`);

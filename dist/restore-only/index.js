@@ -95445,6 +95445,7 @@ const utils = __importStar(__nccwpck_require__(1518));
 const cacheHttpClient = __importStar(__nccwpck_require__(9268));
 const tar_1 = __nccwpck_require__(6490);
 const child_process_1 = __nccwpck_require__(2081);
+const actionUtils_1 = __nccwpck_require__(6850);
 class ValidationError extends Error {
     constructor(message) {
         super(message);
@@ -95494,7 +95495,7 @@ exports.isFeatureAvailable = isFeatureAvailable;
  * @param enableCrossOsArchive an optional boolean enabled to restore on windows any cache created on any platform
  * @returns string returns the key for the cache hit, otherwise returns undefined
  */
-function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArchive = false) {
+function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArchive = false, noCompression = false) {
     return __awaiter(this, void 0, void 0, function* () {
         checkPaths(paths);
         restoreKeys = restoreKeys || [];
@@ -95507,7 +95508,7 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
         for (const key of keys) {
             checkKey(key);
         }
-        const compressionMethod = yield utils.getCompressionMethod();
+        const compressionMethod = yield (0, actionUtils_1.getCompressionMethod)(noCompression);
         let archivePath = "";
         try {
             // path are needed to compute version
@@ -95523,16 +95524,31 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
                 core.info("Lookup only - skipping download");
                 return cacheEntry.cacheKey;
             }
-            archivePath = path.join(yield utils.createTempDirectory(), utils.getCacheFileName(compressionMethod));
+            archivePath = path.join(yield utils.createTempDirectory(), (0, actionUtils_1.getCacheFileName)(compressionMethod));
             core.debug(`Archive Path: ${archivePath}`);
             // Download the cache from the cache entry
             yield cacheHttpClient.downloadCache(cacheEntry.archiveLocation, archivePath, options);
             if (core.isDebug()) {
-                yield (0, tar_1.listTar)(archivePath, compressionMethod);
+                if (noCompression) {
+                    core.debug("ListTar unavailable with No compression method");
+                }
+                else {
+                    yield (0, tar_1.listTar)(archivePath, compressionMethod);
+                }
             }
             const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
             core.info(`Cache Size: ~${Math.round(archiveFileSize / (1024 * 1024))} MB (${archiveFileSize} B)`);
-            yield (0, tar_1.extractTar)(archivePath, compressionMethod);
+            if (noCompression) {
+                const command = `tar -xf ${archivePath} -P -C ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`;
+                core.debug(`Extracting ${archivePath} to ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`);
+                const output = (0, child_process_1.execSync)(command);
+                if (output && output.length > 0) {
+                    core.debug(output.toString());
+                }
+            }
+            else {
+                yield (0, tar_1.extractTar)(archivePath, compressionMethod);
+            }
             core.info("Cache restored successfully");
             return cacheEntry.cacheKey;
         }
@@ -95617,7 +95633,7 @@ function saveCache(paths, key, options, enableCrossOsArchive = false, sync = fal
     return __awaiter(this, void 0, void 0, function* () {
         checkPaths(paths);
         checkKey(key);
-        const compressionMethod = yield utils.getCompressionMethod();
+        const compressionMethod = yield (0, actionUtils_1.getCompressionMethod)(noCompression);
         let cacheId = -1;
         const cachePaths = yield utils.resolvePaths(paths);
         core.debug("Cache Paths:");
@@ -95626,7 +95642,7 @@ function saveCache(paths, key, options, enableCrossOsArchive = false, sync = fal
             throw new Error(`Path Validation Error: Path(s) specified in the action for caching do(es) not exist, hence no cache is being saved.`);
         }
         const archiveFolder = yield utils.createTempDirectory();
-        const archivePath = path.join(archiveFolder, utils.getCacheFileName(compressionMethod));
+        const archivePath = path.join(archiveFolder, (0, actionUtils_1.getCacheFileName)(compressionMethod));
         core.debug(`Archive Path: ${archivePath}`);
         try {
             if (sync) {
@@ -95653,9 +95669,9 @@ function saveCache(paths, key, options, enableCrossOsArchive = false, sync = fal
                 }
                 else {
                     yield (0, tar_1.createTar)(archiveFolder, cachePaths, compressionMethod);
-                }
-                if (core.isDebug()) {
-                    yield (0, tar_1.listTar)(archivePath, compressionMethod);
+                    if (core.isDebug()) {
+                        yield (0, tar_1.listTar)(archivePath, compressionMethod);
+                    }
                 }
                 const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
                 core.debug(`File Size: ${archiveFileSize}`);
@@ -96044,6 +96060,7 @@ function restoreImpl(stateProvider, earlyExit) {
             const failOnCacheMiss = utils.getInputAsBool(constants_1.Inputs.FailOnCacheMiss);
             const lookupOnly = utils.getInputAsBool(constants_1.Inputs.LookupOnly);
             const isSync = utils.getInputAsBool(constants_1.Inputs.Sync);
+            const noCompression = utils.getInputAsBool(constants_1.Inputs.NoCompression);
             let cacheKey;
             if (canSaveToS3) {
                 core.info("The cache action detected a local S3 bucket cache. Using it.");
@@ -96051,7 +96068,7 @@ function restoreImpl(stateProvider, earlyExit) {
                     cacheKey = yield custom.restoreCacheSync(cachePaths, primaryKey, { lookupOnly: lookupOnly });
                 }
                 else {
-                    cacheKey = yield custom.restoreCache(cachePaths, primaryKey, restoreKeys, { lookupOnly: lookupOnly }, isSync);
+                    cacheKey = yield custom.restoreCache(cachePaths, primaryKey, restoreKeys, { lookupOnly: lookupOnly }, false, noCompression);
                 }
             }
             else {
@@ -96220,11 +96237,21 @@ var __importStar = (this && this.__importStar) || function (mod) {
     __setModuleDefault(result, mod);
     return result;
 };
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.isCacheFeatureAvailable = exports.getInputAsBool = exports.getInputAsInt = exports.getInputAsArray = exports.isValidEvent = exports.logWarning = exports.isExactKeyMatch = exports.isGhes = void 0;
+exports.getCacheFileName = exports.getCompressionMethod = exports.isCacheFeatureAvailable = exports.getInputAsBool = exports.getInputAsInt = exports.getInputAsArray = exports.isValidEvent = exports.logWarning = exports.isExactKeyMatch = exports.isGhes = void 0;
 const cache = __importStar(__nccwpck_require__(7799));
 const core = __importStar(__nccwpck_require__(2186));
 const constants_1 = __nccwpck_require__(9042);
+const utils = __importStar(__nccwpck_require__(1518));
 function isGhes() {
     const ghUrl = new URL(process.env["GITHUB_SERVER_URL"] || "https://github.com");
     return ghUrl.hostname.toUpperCase() !== "GITHUB.COM";
@@ -96282,6 +96309,20 @@ Otherwise please upgrade to GHES version >= 3.5 and If you are also using Github
     return false;
 }
 exports.isCacheFeatureAvailable = isCacheFeatureAvailable;
+function getCompressionMethod(noCompression) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (noCompression)
+            return "none";
+        return yield utils.getCompressionMethod();
+    });
+}
+exports.getCompressionMethod = getCompressionMethod;
+function getCacheFileName(compressionMethod) {
+    if (compressionMethod === "none")
+        return "cache";
+    return utils.getCacheFileName(compressionMethod);
+}
+exports.getCacheFileName = getCacheFileName;
 
 
 /***/ }),

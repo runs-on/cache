@@ -27,6 +27,10 @@ inputs:
     description: 'An optional boolean when enabled, Does not extract the cache and syncs the contents of the cache directory directly to the cache location'
     default: 'false'
     required: false
+  no-compression:
+    description: 'An optional boolean when enabled, extracts tar archive without compression'
+    default: 'false'
+    required: false
 outputs:
   cache-hit:
     description: 'A boolean value to indicate an exact match was found for the primary key'

@@ -49,6 +49,8 @@ export async function restoreImpl(
 
         const isSync = utils.getInputAsBool(Inputs.Sync);
 
+        const noCompression = utils.getInputAsBool(Inputs.NoCompression);
+
         let cacheKey: string | undefined;
 
         if (canSaveToS3) {
@@ -68,7 +70,8 @@ export async function restoreImpl(
                     primaryKey,
                     restoreKeys,
                     { lookupOnly: lookupOnly },
-                    isSync
+                    false,
+                    noCompression
                 );
             }
         } else {

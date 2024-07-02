@@ -3,6 +3,8 @@ import * as core from "@actions/core";
 
 import { RefKey } from "../constants";
 
+import * as utils from "@actions/cache/lib/internal/cacheUtils";
+
 export function isGhes(): boolean {
     const ghUrl = new URL(
         process.env["GITHUB_SERVER_URL"] || "https://github.com"
@@ -77,4 +79,17 @@ Otherwise please upgrade to GHES version >= 3.5 and If you are also using Github
         "An internal error has occurred in cache backend. Please check https://www.githubstatus.com/ for any ongoing issue in actions."
     );
     return false;
+}
+
+
+export async function getCompressionMethod(noCompression: boolean) {
+    if (noCompression)
+        return "none";
+    return await utils.getCompressionMethod();
+}
+
+export function getCacheFileName(compressionMethod) {
+    if (compressionMethod === "none")
+        return "cache"
+    return utils.getCacheFileName(compressionMethod);
 }
