@@ -95225,18 +95225,16 @@ function getS3PrefixSync(paths) {
     const version = getCacheVersion(paths);
     return ["cache", repository, version].join("/");
 }
-function getCacheEntry(keys, paths, { compressionMethod, enableCrossOsArchive }, isSync = false) {
+function getCacheEntry(keys, paths, { compressionMethod, enableCrossOsArchive }) {
     return __awaiter(this, void 0, void 0, function* () {
         const cacheEntry = {};
         // Find the most recent key matching one of the restoreKeys prefixes
         for (const restoreKey of keys) {
-            let s3Prefix = getS3Prefix(paths, {
+            const s3Prefix = getS3Prefix(paths, {
                 compressionMethod,
                 enableCrossOsArchive
             });
-            if (isSync) {
-                s3Prefix = getS3PrefixSync(paths);
-            }
+            core.info(`Looking for cache at ${s3Prefix}/${restoreKey}`);
             const listObjectsParams = {
                 Bucket: bucketName,
                 Prefix: [s3Prefix, restoreKey].join("/")
