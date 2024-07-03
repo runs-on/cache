@@ -256,9 +256,10 @@ export async function saveCache(
     const compressionMethod = await getCompressionMethod(noCompression);
     let cacheId = -1;
 
+    core.info(`${JSON.stringify(paths)}`);
     const cachePaths = await utils.resolvePaths(paths);
-    core.debug("Cache Paths:");
-    core.debug(`${JSON.stringify(cachePaths)}`);
+    core.info("Cache Paths:");
+    core.info(`${JSON.stringify(cachePaths)}`);
 
     if (cachePaths.length === 0) {
         throw new Error(

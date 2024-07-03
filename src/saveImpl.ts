@@ -60,6 +60,8 @@ export async function saveImpl(
             required: true
         });
 
+        core.info(`Cache paths: ${cachePaths}`);
+
         const enableCrossOsArchive = utils.getInputAsBool(
             Inputs.EnableCrossOsArchive
         );
