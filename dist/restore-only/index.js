@@ -95651,7 +95651,7 @@ function saveCache(paths, key, options, enableCrossOsArchive = false, noCompress
                 // Create uncompressed tar archive
                 let first = true;
                 for (const cachePath of cachePaths) {
-                    let command = `tar --posix -rf ${archivePath} --exclude ${archivePath} -P C ${baseDir} ${cachePath}`;
+                    let command = `tar --posix -rf ${archivePath} --exclude ${archivePath} -P -C ${baseDir} ${cachePath}`;
                     if (first) {
                         first = false;
                         // Create a new archive
