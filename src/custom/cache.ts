@@ -145,10 +145,10 @@ export async function restoreCache(
 
         if (noCompression) {
             const command = `tar -xf ${archivePath} -P -C ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`;
-            core.debug(`Extracting ${archivePath} to ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`);
+            core.info(`Extracting ${archivePath} to ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`);
             const output = execSync(command);
             if (output && output.length > 0) {
-                core.debug(output.toString());
+                core.info(output.toString());
             }
         }
         else {
