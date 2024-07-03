@@ -144,8 +144,9 @@ export async function restoreCache(
         );
 
         if (noCompression) {
-            const command = `tar -xf ${archivePath} -P -C ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`;
-            core.info(`Extracting ${archivePath} to ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`);
+            const baseDir = process.env["GITHUB_WORKSPACE"] || process.cwd();
+            const command = `tar -xf ${archivePath} -P -C ${baseDir}`;
+            core.info(`Extracting ${archivePath} to ${baseDir}`);
             const output = execSync(command);
             if (output && output.length > 0) {
                 core.info(output.toString());
@@ -277,14 +278,15 @@ export async function saveCache(
 
     try {
         if (noCompression) {
+            const baseDir = process.env["GITHUB_WORKSPACE"] || process.cwd();
             // Create uncompressed tar archive
             let first = true;
             for (const cachePath of cachePaths) {
-                let command = `tar -rf ${archivePath} -P C ${cachePath} .`;
+                let command = `tar --posix -rf ${archivePath} --exclude ${archivePath} -P C ${baseDir} ${cachePath}`;
                 if (first) {
                     first = false;
                     // Create a new archive
-                    command = `tar -cf ${archivePath} -P -C ${cachePath} .`;
+                    command = `tar --posix -cf ${archivePath} --exclude ${archivePath} -P -C ${baseDir} ${cachePath}`;
                 }
                 core.info(`Appending ${cachePath} to ${archivePath}`);
                 const output = execSync(command);

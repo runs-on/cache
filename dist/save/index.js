@@ -95537,8 +95537,9 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
             const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
             core.info(`Cache Size: ~${Math.round(archiveFileSize / (1024 * 1024))} MB (${archiveFileSize} B)`);
             if (noCompression) {
-                const command = `tar -xf ${archivePath} -P -C ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`;
-                core.info(`Extracting ${archivePath} to ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`);
+                const baseDir = process.env["GITHUB_WORKSPACE"] || process.cwd();
+                const command = `tar -xf ${archivePath} -P -C ${baseDir}`;
+                core.info(`Extracting ${archivePath} to ${baseDir}`);
                 const output = (0, child_process_1.execSync)(command);
                 if (output && output.length > 0) {
                     core.info(output.toString());
@@ -95646,14 +95647,15 @@ function saveCache(paths, key, options, enableCrossOsArchive = false, noCompress
         core.info(`Archive Path: ${archivePath}`);
         try {
             if (noCompression) {
+                const baseDir = process.env["GITHUB_WORKSPACE"] || process.cwd();
                 // Create uncompressed tar archive
                 let first = true;
                 for (const cachePath of cachePaths) {
-                    let command = `tar -rf ${archivePath} -C ${cachePath} .`;
+                    let command = `tar --posix -rf ${archivePath} --exclude ${archivePath} -P C ${baseDir} ${cachePath}`;
                     if (first) {
                         first = false;
                         // Create a new archive
-                        command = `tar -cf ${archivePath} -C ${cachePath} .`;
+                        command = `tar --posix -cf ${archivePath} --exclude ${archivePath} -P -C ${baseDir} ${cachePath}`;
                     }
                     core.info(`Appending ${cachePath} to ${archivePath}`);
                     const output = (0, child_process_1.execSync)(command);
