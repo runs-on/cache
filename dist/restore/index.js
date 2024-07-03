@@ -95438,7 +95438,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.saveCache = exports.restoreCacheSync = exports.restoreCache = exports.isFeatureAvailable = exports.ReserveCacheError = exports.ValidationError = void 0;
+exports.saveCacheSync = exports.saveCache = exports.restoreCacheSync = exports.restoreCache = exports.isFeatureAvailable = exports.ReserveCacheError = exports.ValidationError = void 0;
 const core = __importStar(__nccwpck_require__(2186));
 const path = __importStar(__nccwpck_require__(1017));
 const utils = __importStar(__nccwpck_require__(1518));
@@ -95629,7 +95629,7 @@ exports.restoreCacheSync = restoreCacheSync;
  * @param options cache upload options
  * @returns number returns cacheId if the cache was saved successfully and throws an error if save fails
  */
-function saveCache(paths, key, options, enableCrossOsArchive = false, sync = false, noCompression = true) {
+function saveCache(paths, key, options, enableCrossOsArchive = false, noCompression = true) {
     return __awaiter(this, void 0, void 0, function* () {
         checkPaths(paths);
         checkKey(key);
@@ -95643,44 +95643,38 @@ function saveCache(paths, key, options, enableCrossOsArchive = false, sync = fal
         }
         const archiveFolder = yield utils.createTempDirectory();
         const archivePath = path.join(archiveFolder, (0, actionUtils_1.getCacheFileName)(compressionMethod));
-        core.debug(`Archive Path: ${archivePath}`);
+        core.info(`Archive Path: ${archivePath}`);
         try {
-            if (sync) {
-                // const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
-                yield cacheHttpClient.saveCacheSync(key, paths);
+            if (noCompression) {
+                // Create uncompressed tar archive
+                let first = true;
+                for (const cachePath of cachePaths) {
+                    let command = `tar -rf ${archivePath} -C ${cachePath} .`;
+                    if (first) {
+                        first = false;
+                        // Create a new archive
+                        command = `tar -cf ${archivePath} -C ${cachePath} .`;
+                    }
+                    core.info(`Appending ${cachePath} to ${archivePath}`);
+                    const output = (0, child_process_1.execSync)(command);
+                    if (output && output.length > 0) {
+                        core.debug(output.toString());
+                    }
+                }
             }
             else {
-                if (noCompression) {
-                    // Create uncompressed tar archive
-                    let first = true;
-                    for (const cachePath of cachePaths) {
-                        let command = `tar -rf ${archivePath} -C ${cachePath} .`;
-                        if (first) {
-                            first = false;
-                            // Create a new archive
-                            command = `tar -cf ${archivePath} -C ${cachePath} .`;
-                        }
-                        core.debug(`Appending ${cachePath} to ${archivePath}`);
-                        const output = (0, child_process_1.execSync)(command);
-                        if (output && output.length > 0) {
-                            core.debug(output.toString());
-                        }
-                    }
+                yield (0, tar_1.createTar)(archiveFolder, cachePaths, compressionMethod);
+                if (core.isDebug()) {
+                    yield (0, tar_1.listTar)(archivePath, compressionMethod);
                 }
-                else {
-                    yield (0, tar_1.createTar)(archiveFolder, cachePaths, compressionMethod);
-                    if (core.isDebug()) {
-                        yield (0, tar_1.listTar)(archivePath, compressionMethod);
-                    }
-                }
-                const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
-                core.debug(`File Size: ${archiveFileSize}`);
-                yield cacheHttpClient.saveCache(key, paths, archivePath, {
-                    compressionMethod,
-                    enableCrossOsArchive,
-                    cacheSize: archiveFileSize
-                });
             }
+            const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
+            core.info(`File Size: ${archiveFileSize}`);
+            yield cacheHttpClient.saveCache(key, paths, archivePath, {
+                compressionMethod,
+                enableCrossOsArchive,
+                cacheSize: archiveFileSize
+            });
             // dummy cacheId, if we get there without raising, it means the cache has been saved
             cacheId = 1;
         }
@@ -95709,6 +95703,45 @@ function saveCache(paths, key, options, enableCrossOsArchive = false, sync = fal
     });
 }
 exports.saveCache = saveCache;
+/**
+ * Saves a list of files with the specified key
+ *
+ * @param paths a list of file paths to be cached
+ * @param key an explicit key for restoring the cache
+ * @returns number returns cacheId if the cache was saved successfully and throws an error if save fails
+ */
+function saveCacheSync(paths, key) {
+    return __awaiter(this, void 0, void 0, function* () {
+        checkPaths(paths);
+        checkKey(key);
+        let cacheId = -1;
+        const cachePaths = yield utils.resolvePaths(paths);
+        core.debug("Cache Paths:");
+        core.debug(`${JSON.stringify(cachePaths)}`);
+        if (cachePaths.length === 0) {
+            throw new Error(`Path Validation Error: Path(s) specified in the action for caching do(es) not exist, hence no cache is being saved.`);
+        }
+        try {
+            yield cacheHttpClient.saveCacheSync(key, paths);
+            // dummy cacheId, if we get there without raising, it means the cache has been saved
+            cacheId = 1;
+        }
+        catch (error) {
+            const typedError = error;
+            if (typedError.name === ValidationError.name) {
+                throw error;
+            }
+            else if (typedError.name === ReserveCacheError.name) {
+                core.info(`Failed to save: ${typedError.message}`);
+            }
+            else {
+                core.warning(`Failed to save: ${typedError.message}`);
+            }
+        }
+        return cacheId;
+    });
+}
+exports.saveCacheSync = saveCacheSync;
 
 
 /***/ }),

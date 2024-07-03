@@ -247,7 +247,6 @@ export async function saveCache(
     key: string,
     options?: UploadOptions,
     enableCrossOsArchive = false,
-    sync = false,
     noCompression = true
 ): Promise<number> {
     checkPaths(paths);
@@ -272,46 +271,40 @@ export async function saveCache(
         getCacheFileName(compressionMethod)
     );
 
-    core.debug(`Archive Path: ${archivePath}`);
+    core.info(`Archive Path: ${archivePath}`);
 
     try {
-        if (sync) {
-            // const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
-            await cacheHttpClient.saveCacheSync(key, paths);
+        if (noCompression) {
+            // Create uncompressed tar archive
+            let first = true;
+            for (const cachePath of cachePaths) {
+                let command = `tar -rf ${archivePath} -C ${cachePath} .`;
+                if (first) {
+                    first = false;
+                    // Create a new archive
+                    command = `tar -cf ${archivePath} -C ${cachePath} .`;
+                }
+                core.info(`Appending ${cachePath} to ${archivePath}`);
+                const output = execSync(command);
+                if (output && output.length > 0) {
+                    core.debug(output.toString());
+                }
+            }
         }
         else {
-            if (noCompression) {
-                // Create uncompressed tar archive
-                let first = true;
-                for (const cachePath of cachePaths) {
-                    let command = `tar -rf ${archivePath} -C ${cachePath} .`;
-                    if (first) {
-                        first = false;
-                        // Create a new archive
-                        command = `tar -cf ${archivePath} -C ${cachePath} .`;
-                    }
-                    core.debug(`Appending ${cachePath} to ${archivePath}`);
-                    const output = execSync(command);
-                    if (output && output.length > 0) {
-                        core.debug(output.toString());
-                    }
-                }
+            await createTar(archiveFolder, cachePaths, compressionMethod as CompressionMethod);
+            if (core.isDebug()) {
+                await listTar(archivePath, compressionMethod as CompressionMethod);
             }
-            else {
-                await createTar(archiveFolder, cachePaths, compressionMethod as CompressionMethod);
-                if (core.isDebug()) {
-                    await listTar(archivePath, compressionMethod as CompressionMethod);
-                }
-            }
-            const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
-            core.debug(`File Size: ${archiveFileSize}`);
-
-            await cacheHttpClient.saveCache(key, paths, archivePath, {
-                compressionMethod,
-                enableCrossOsArchive,
-                cacheSize: archiveFileSize
-            });
         }
+        const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
+        core.info(`File Size: ${archiveFileSize}`);
+
+        await cacheHttpClient.saveCache(key, paths, archivePath, {
+            compressionMethod,
+            enableCrossOsArchive,
+            cacheSize: archiveFileSize
+        });
 
         // dummy cacheId, if we get there without raising, it means the cache has been saved
         cacheId = 1;
@@ -333,5 +326,48 @@ export async function saveCache(
         }
     }
 
+    return cacheId;
+}
+
+/**
+ * Saves a list of files with the specified key
+ *
+ * @param paths a list of file paths to be cached
+ * @param key an explicit key for restoring the cache
+ * @returns number returns cacheId if the cache was saved successfully and throws an error if save fails
+ */
+export async function saveCacheSync(
+    paths: string[],
+    key: string
+): Promise<number> {
+    checkPaths(paths);
+    checkKey(key);
+
+    let cacheId = -1;
+
+    const cachePaths = await utils.resolvePaths(paths);
+    core.debug("Cache Paths:");
+    core.debug(`${JSON.stringify(cachePaths)}`);
+
+    if (cachePaths.length === 0) {
+        throw new Error(
+            `Path Validation Error: Path(s) specified in the action for caching do(es) not exist, hence no cache is being saved.`
+        );
+    }
+
+    try {
+        await cacheHttpClient.saveCacheSync(key, paths);
+        // dummy cacheId, if we get there without raising, it means the cache has been saved
+        cacheId = 1;
+    } catch (error) {
+        const typedError = error as Error;
+        if (typedError.name === ValidationError.name) {
+            throw error;
+        } else if (typedError.name === ReserveCacheError.name) {
+            core.info(`Failed to save: ${typedError.message}`);
+        } else {
+            core.warning(`Failed to save: ${typedError.message}`);
+        }
+    }
     return cacheId;
 }

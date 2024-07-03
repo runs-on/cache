@@ -73,16 +73,22 @@ export async function saveImpl(
                 "The cache action detected a local S3 bucket cache. Using it."
             );
 
-            cacheId = await custom.saveCache(
-                cachePaths,
-                primaryKey,
-                {
-                    uploadChunkSize: utils.getInputAsInt(Inputs.UploadChunkSize)
-                },
-                enableCrossOsArchive,
-                sync,
-                noCompression
-            );
+            if (sync) {
+                cacheId = await custom.saveCacheSync(
+                    cachePaths,
+                    primaryKey
+                );
+            } else {
+                cacheId = await custom.saveCache(
+                    cachePaths,
+                    primaryKey,
+                    {
+                        uploadChunkSize: utils.getInputAsInt(Inputs.UploadChunkSize)
+                    },
+                    enableCrossOsArchive,
+                    noCompression
+                );
+            }
         } else {
             cacheId = await cache.saveCache(
                 cachePaths,
