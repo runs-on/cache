@@ -95631,6 +95631,7 @@ exports.restoreCacheSync = restoreCacheSync;
  */
 function saveCache(paths, key, options, enableCrossOsArchive = false, noCompression = true) {
     return __awaiter(this, void 0, void 0, function* () {
+        core.info("Saving Cache via archive.");
         checkPaths(paths);
         checkKey(key);
         const compressionMethod = yield (0, actionUtils_1.getCompressionMethod)(noCompression);
@@ -95712,6 +95713,7 @@ exports.saveCache = saveCache;
  */
 function saveCacheSync(paths, key) {
     return __awaiter(this, void 0, void 0, function* () {
+        core.info("Saving Cache via sync.");
         checkPaths(paths);
         checkKey(key);
         let cacheId = -1;

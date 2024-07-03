@@ -249,6 +249,7 @@ export async function saveCache(
     enableCrossOsArchive = false,
     noCompression = true
 ): Promise<number> {
+    core.info("Saving Cache via archive.");
     checkPaths(paths);
     checkKey(key);
 
@@ -340,6 +341,7 @@ export async function saveCacheSync(
     paths: string[],
     key: string
 ): Promise<number> {
+    core.info("Saving Cache via sync.");
     checkPaths(paths);
     checkKey(key);
 
