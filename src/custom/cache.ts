@@ -280,11 +280,11 @@ export async function saveCache(
             // Create uncompressed tar archive
             let first = true;
             for (const cachePath of cachePaths) {
-                let command = `tar -rf ${archivePath} -C ${cachePath} .`;
+                let command = `tar -rf ${archivePath} -P C ${cachePath} .`;
                 if (first) {
                     first = false;
                     // Create a new archive
-                    command = `tar -cf ${archivePath} -C ${cachePath} .`;
+                    command = `tar -cf ${archivePath} -P -C ${cachePath} .`;
                 }
                 core.info(`Appending ${cachePath} to ${archivePath}`);
                 const output = execSync(command);
