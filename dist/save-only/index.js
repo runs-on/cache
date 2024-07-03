@@ -95538,10 +95538,10 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
             core.info(`Cache Size: ~${Math.round(archiveFileSize / (1024 * 1024))} MB (${archiveFileSize} B)`);
             if (noCompression) {
                 const command = `tar -xf ${archivePath} -P -C ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`;
-                core.debug(`Extracting ${archivePath} to ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`);
+                core.info(`Extracting ${archivePath} to ${process.env["GITHUB_WORKSPACE"] || process.cwd()}`);
                 const output = (0, child_process_1.execSync)(command);
                 if (output && output.length > 0) {
-                    core.debug(output.toString());
+                    core.info(output.toString());
                 }
             }
             else {
