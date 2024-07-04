@@ -78,7 +78,7 @@ export async function restoreCache(
     restoreKeys?: string[],
     options?: DownloadOptions,
     enableCrossOsArchive = false,
-    noCompression = false
+    customCompression = "none"
 ): Promise<string | undefined> {
     checkPaths(paths);
 
@@ -97,7 +97,7 @@ export async function restoreCache(
         checkKey(key);
     }
 
-    const compressionMethod = await getCompressionMethod(noCompression);
+    const compressionMethod = await getCompressionMethod(customCompression);
     let archivePath = "";
     try {
         // path are needed to compute version
@@ -129,8 +129,8 @@ export async function restoreCache(
         );
 
         if (core.isDebug()) {
-            if (noCompression) {
-                core.debug("ListTar unavailable with No compression method");
+            if (customCompression) {
+                core.debug("ListTar unavailable with custom compression method");
             } else {
                 await listTar(archivePath, compressionMethod as CompressionMethod);
             }
@@ -143,9 +143,10 @@ export async function restoreCache(
             )} MB (${archiveFileSize} B)`
         );
 
-        if (noCompression) {
+        if (customCompression) {
             const baseDir = process.env["GITHUB_WORKSPACE"] || process.cwd();
-            const command = `tar -xf ${archivePath} -P -C ${baseDir}`;
+            const compressionArgs = customCompression === "none" ? "" : `--use-compress-program=${customCompression}`;
+            const command = `tar -xf ${archivePath} -P -C ${baseDir} ${compressionArgs}`;
             core.info(`Extracting ${archivePath} to ${baseDir}`);
             const output = execSync(command);
             if (output && output.length > 0) {
@@ -248,17 +249,17 @@ export async function saveCache(
     key: string,
     options?: UploadOptions,
     enableCrossOsArchive = false,
-    noCompression = true
+    customCompression = "none"
 ): Promise<number> {
     core.info("Saving Cache via archive.");
     checkPaths(paths);
     checkKey(key);
 
-    const compressionMethod = await getCompressionMethod(noCompression);
+    const compressionMethod = await getCompressionMethod(customCompression);
     let cacheId = -1;
 
     core.info(`${JSON.stringify(paths)}`);
-    const cachePaths = await utils.resolvePaths(paths);
+    const cachePaths: string[] = await utils.resolvePaths(paths);
     core.info("Cache Paths:");
     core.info(`${JSON.stringify(cachePaths)}`);
 
@@ -277,22 +278,13 @@ export async function saveCache(
     core.info(`Archive Path: ${archivePath}`);
 
     try {
-        if (noCompression) {
+        if (customCompression) {
             const baseDir = process.env["GITHUB_WORKSPACE"] || process.cwd();
-            // Create uncompressed tar archive
-            let first = true;
-            for (const cachePath of cachePaths) {
-                let command = `tar --posix -rf ${archivePath} --exclude ${archivePath} -P -C ${baseDir} ${cachePath}`;
-                if (first) {
-                    first = false;
-                    // Create a new archive
-                    command = `tar --posix -cf ${archivePath} --exclude ${archivePath} -P -C ${baseDir} ${cachePath}`;
-                }
-                core.info(`Appending ${cachePath} to ${archivePath}`);
-                const output = execSync(command);
-                if (output && output.length > 0) {
-                    core.debug(output.toString());
-                }
+            const compressionArgs = customCompression === "none" ? "" : `--use-compress-program=${customCompression}`;
+            const command = `tar --posix -cf ${archivePath} --exclude ${archivePath} -P -C ${baseDir} ${cachePaths.join(' ')} ${compressionArgs}`;
+            const output = execSync(command);
+            if (output && output.length > 0) {
+                core.debug(output.toString());
             }
         }
         else {

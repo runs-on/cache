@@ -68,7 +68,7 @@ export async function saveImpl(
 
         const sync = utils.getInputAsBool(Inputs.Sync);
 
-        const noCompression = utils.getInputAsBool(Inputs.NoCompression);
+        const customCompression = core.getInput(Inputs.CustomCompression);
 
         if (canSaveToS3) {
             core.info(
@@ -88,7 +88,7 @@ export async function saveImpl(
                         uploadChunkSize: utils.getInputAsInt(Inputs.UploadChunkSize)
                     },
                     enableCrossOsArchive,
-                    noCompression
+                    customCompression
                 );
             }
         } else {

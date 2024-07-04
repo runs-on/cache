@@ -95101,7 +95101,7 @@ var Inputs;
     Inputs["EnableCrossOsArchive"] = "enableCrossOsArchive";
     Inputs["FailOnCacheMiss"] = "fail-on-cache-miss";
     Inputs["LookupOnly"] = "lookup-only";
-    Inputs["NoCompression"] = "no-compression";
+    Inputs["CustomCompression"] = "custom-compression";
     Inputs["Sync"] = "sync"; // Input for cache, save action
 })(Inputs = exports.Inputs || (exports.Inputs = {}));
 var Outputs;
@@ -95493,7 +95493,7 @@ exports.isFeatureAvailable = isFeatureAvailable;
  * @param enableCrossOsArchive an optional boolean enabled to restore on windows any cache created on any platform
  * @returns string returns the key for the cache hit, otherwise returns undefined
  */
-function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArchive = false, noCompression = false) {
+function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArchive = false, customCompression = "none") {
     return __awaiter(this, void 0, void 0, function* () {
         checkPaths(paths);
         restoreKeys = restoreKeys || [];
@@ -95506,7 +95506,7 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
         for (const key of keys) {
             checkKey(key);
         }
-        const compressionMethod = yield (0, actionUtils_1.getCompressionMethod)(noCompression);
+        const compressionMethod = yield (0, actionUtils_1.getCompressionMethod)(customCompression);
         let archivePath = "";
         try {
             // path are needed to compute version
@@ -95527,8 +95527,8 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
             // Download the cache from the cache entry
             yield cacheHttpClient.downloadCache(cacheEntry.archiveLocation, archivePath, options);
             if (core.isDebug()) {
-                if (noCompression) {
-                    core.debug("ListTar unavailable with No compression method");
+                if (customCompression) {
+                    core.debug("ListTar unavailable with custom compression method");
                 }
                 else {
                     yield (0, tar_1.listTar)(archivePath, compressionMethod);
@@ -95536,9 +95536,10 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
             }
             const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
             core.info(`Cache Size: ~${Math.round(archiveFileSize / (1024 * 1024))} MB (${archiveFileSize} B)`);
-            if (noCompression) {
+            if (customCompression) {
                 const baseDir = process.env["GITHUB_WORKSPACE"] || process.cwd();
-                const command = `tar -xf ${archivePath} -P -C ${baseDir}`;
+                const compressionArgs = customCompression === "none" ? "" : `--use-compress-program=${customCompression}`;
+                const command = `tar -xf ${archivePath} -P -C ${baseDir} ${compressionArgs}`;
                 core.info(`Extracting ${archivePath} to ${baseDir}`);
                 const output = (0, child_process_1.execSync)(command);
                 if (output && output.length > 0) {
@@ -95628,12 +95629,12 @@ exports.restoreCacheSync = restoreCacheSync;
  * @param options cache upload options
  * @returns number returns cacheId if the cache was saved successfully and throws an error if save fails
  */
-function saveCache(paths, key, options, enableCrossOsArchive = false, noCompression = true) {
+function saveCache(paths, key, options, enableCrossOsArchive = false, customCompression = "none") {
     return __awaiter(this, void 0, void 0, function* () {
         core.info("Saving Cache via archive.");
         checkPaths(paths);
         checkKey(key);
-        const compressionMethod = yield (0, actionUtils_1.getCompressionMethod)(noCompression);
+        const compressionMethod = yield (0, actionUtils_1.getCompressionMethod)(customCompression);
         let cacheId = -1;
         core.info(`${JSON.stringify(paths)}`);
         const cachePaths = yield utils.resolvePaths(paths);
@@ -95646,22 +95647,13 @@ function saveCache(paths, key, options, enableCrossOsArchive = false, noCompress
         const archivePath = path.join(archiveFolder, (0, actionUtils_1.getCacheFileName)(compressionMethod));
         core.info(`Archive Path: ${archivePath}`);
         try {
-            if (noCompression) {
+            if (customCompression) {
                 const baseDir = process.env["GITHUB_WORKSPACE"] || process.cwd();
-                // Create uncompressed tar archive
-                let first = true;
-                for (const cachePath of cachePaths) {
-                    let command = `tar --posix -rf ${archivePath} --exclude ${archivePath} -P -C ${baseDir} ${cachePath}`;
-                    if (first) {
-                        first = false;
-                        // Create a new archive
-                        command = `tar --posix -cf ${archivePath} --exclude ${archivePath} -P -C ${baseDir} ${cachePath}`;
-                    }
-                    core.info(`Appending ${cachePath} to ${archivePath}`);
-                    const output = (0, child_process_1.execSync)(command);
-                    if (output && output.length > 0) {
-                        core.debug(output.toString());
-                    }
+                const compressionArgs = customCompression === "none" ? "" : `--use-compress-program=${customCompression}`;
+                const command = `tar --posix -cf ${archivePath} --exclude ${archivePath} -P -C ${baseDir} ${cachePaths.join(' ')} ${compressionArgs}`;
+                const output = (0, child_process_1.execSync)(command);
+                if (output && output.length > 0) {
+                    core.debug(output.toString());
                 }
             }
             else {
@@ -96108,7 +96100,7 @@ function saveImpl(stateProvider) {
             core.info(`Cache paths: ${cachePaths}`);
             const enableCrossOsArchive = utils.getInputAsBool(constants_1.Inputs.EnableCrossOsArchive);
             const sync = utils.getInputAsBool(constants_1.Inputs.Sync);
-            const noCompression = utils.getInputAsBool(constants_1.Inputs.NoCompression);
+            const customCompression = core.getInput(constants_1.Inputs.CustomCompression);
             if (canSaveToS3) {
                 core.info("The cache action detected a local S3 bucket cache. Using it.");
                 if (sync) {
@@ -96117,7 +96109,7 @@ function saveImpl(stateProvider) {
                 else {
                     cacheId = yield custom.saveCache(cachePaths, primaryKey, {
                         uploadChunkSize: utils.getInputAsInt(constants_1.Inputs.UploadChunkSize)
-                    }, enableCrossOsArchive, noCompression);
+                    }, enableCrossOsArchive, customCompression);
                 }
             }
             else {
@@ -96305,6 +96297,7 @@ const cache = __importStar(__nccwpck_require__(7799));
 const core = __importStar(__nccwpck_require__(2186));
 const constants_1 = __nccwpck_require__(9042);
 const utils = __importStar(__nccwpck_require__(1518));
+const constants_2 = __nccwpck_require__(8840);
 function isGhes() {
     const ghUrl = new URL(process.env["GITHUB_SERVER_URL"] || "https://github.com");
     return ghUrl.hostname.toUpperCase() !== "GITHUB.COM";
@@ -96362,18 +96355,22 @@ Otherwise please upgrade to GHES version >= 3.5 and If you are also using Github
     return false;
 }
 exports.isCacheFeatureAvailable = isCacheFeatureAvailable;
-function getCompressionMethod(noCompression) {
+function getCompressionMethod(customCompression) {
     return __awaiter(this, void 0, void 0, function* () {
-        if (noCompression)
-            return "none";
-        return yield utils.getCompressionMethod();
+        if (Object.values(constants_2.CompressionMethod).includes(customCompression)) {
+            return yield utils.getCompressionMethod();
+        }
+        return customCompression;
     });
 }
 exports.getCompressionMethod = getCompressionMethod;
 function getCacheFileName(compressionMethod) {
+    if (Object.values(constants_2.CompressionMethod).includes(compressionMethod)) {
+        return utils.getCacheFileName(compressionMethod);
+    }
     if (compressionMethod === "none")
         return "cache";
-    return utils.getCacheFileName(compressionMethod);
+    return `cache.${compressionMethod}`;
 }
 exports.getCacheFileName = getCacheFileName;
 

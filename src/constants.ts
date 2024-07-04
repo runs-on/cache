@@ -7,7 +7,7 @@ export enum Inputs {
     FailOnCacheMiss = "fail-on-cache-miss", // Input for cache, restore action
     LookupOnly = "lookup-only", // Input for cache, restore action
 
-    NoCompression = "no-compression", // Input for cache, save action
+    CustomCompression = "custom-compression", // Input for cache, save action
     Sync = "sync" // Input for cache, save action
 }
 

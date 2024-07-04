@@ -19,9 +19,9 @@ inputs:
     description: 'An optional boolean when enabled, Does not create an archive and syncs the contents of the cache directory directly to the cache location'
     default: 'false'
     required: false
-  no-compression:
-    description: 'An optional boolean when enabled, creates tar archive without compression'
-    default: 'false'
+  custom-compression:
+    description: 'Creates tar archive with custom compression'
+    default: 'lz4'
     required: false
 runs:
   using: 'node20'
