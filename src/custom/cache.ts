@@ -78,7 +78,7 @@ export async function restoreCache(
     restoreKeys?: string[],
     options?: DownloadOptions,
     enableCrossOsArchive = false,
-    customCompression = "none"
+    customCompression: string | undefined = "none"
 ): Promise<string | undefined> {
     checkPaths(paths);
 
@@ -249,7 +249,7 @@ export async function saveCache(
     key: string,
     options?: UploadOptions,
     enableCrossOsArchive = false,
-    customCompression = "none"
+    customCompression: string | undefined = "none"
 ): Promise<number> {
     core.info("Saving Cache via archive.");
     checkPaths(paths);

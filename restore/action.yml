@@ -29,7 +29,6 @@ inputs:
     required: false
   custom-compression:
     description: 'Extracts tar archive with custom compression'
-    default: 'lz4'
     required: false
 outputs:
   cache-hit:

@@ -21,7 +21,6 @@ inputs:
     required: false
   custom-compression:
     description: 'Creates tar archive with custom compression'
-    default: 'lz4'
     required: false
 runs:
   using: 'node20'
