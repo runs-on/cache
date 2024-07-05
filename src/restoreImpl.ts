@@ -16,6 +16,9 @@ export async function restoreImpl(
     stateProvider: IStateProvider,
     earlyExit?: boolean | undefined
 ): Promise<string | undefined> {
+    core.info("Starting Cache Restore Action");
+    core.debug(`Operating System: ${process.platform}`);
+
     try {
         if (!utils.isCacheFeatureAvailable()) {
             core.setOutput(Outputs.CacheHit, "false");
@@ -25,8 +28,7 @@ export async function restoreImpl(
         // Validate inputs, this can cause task failure
         if (!utils.isValidEvent()) {
             utils.logWarning(
-                `Event Validation Error: The event type ${
-                    process.env[Events.Key]
+                `Event Validation Error: The event type ${process.env[Events.Key]
                 } is not supported because it's not tied to a branch or tag ref.`
             );
             return;
@@ -45,18 +47,33 @@ export async function restoreImpl(
         const failOnCacheMiss = utils.getInputAsBool(Inputs.FailOnCacheMiss);
         const lookupOnly = utils.getInputAsBool(Inputs.LookupOnly);
 
+        const isSync = utils.getInputAsBool(Inputs.Sync);
+
+        const customCompression = core.getInput(Inputs.CustomCompression);
+
         let cacheKey: string | undefined;
 
         if (canSaveToS3) {
             core.info(
                 "The cache action detected a local S3 bucket cache. Using it."
             );
-            cacheKey = await custom.restoreCache(
-                cachePaths,
-                primaryKey,
-                restoreKeys,
-                { lookupOnly: lookupOnly }
-            );
+
+            if (isSync) {
+                cacheKey = await custom.restoreCacheSync(
+                    cachePaths,
+                    primaryKey,
+                    { lookupOnly: lookupOnly }
+                );
+            } else {
+                cacheKey = await custom.restoreCache(
+                    cachePaths,
+                    primaryKey,
+                    restoreKeys,
+                    { lookupOnly: lookupOnly },
+                    false,
+                    customCompression
+                );
+            }
         } else {
             cacheKey = await cache.restoreCache(
                 cachePaths,

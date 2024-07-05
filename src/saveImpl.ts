@@ -28,8 +28,7 @@ export async function saveImpl(
 
         if (!utils.isValidEvent()) {
             utils.logWarning(
-                `Event Validation Error: The event type ${
-                    process.env[Events.Key]
+                `Event Validation Error: The event type ${process.env[Events.Key]
                 } is not supported because it's not tied to a branch or tag ref.`
             );
             return;
@@ -61,23 +60,37 @@ export async function saveImpl(
             required: true
         });
 
+        core.info(`Cache paths: ${cachePaths}`);
+
         const enableCrossOsArchive = utils.getInputAsBool(
             Inputs.EnableCrossOsArchive
         );
+
+        const sync = utils.getInputAsBool(Inputs.Sync);
+
+        const customCompression = core.getInput(Inputs.CustomCompression);
 
         if (canSaveToS3) {
             core.info(
                 "The cache action detected a local S3 bucket cache. Using it."
             );
 
-            cacheId = await custom.saveCache(
-                cachePaths,
-                primaryKey,
-                {
-                    uploadChunkSize: utils.getInputAsInt(Inputs.UploadChunkSize)
-                },
-                enableCrossOsArchive
-            );
+            if (sync) {
+                cacheId = await custom.saveCacheSync(
+                    cachePaths,
+                    primaryKey
+                );
+            } else {
+                cacheId = await custom.saveCache(
+                    cachePaths,
+                    primaryKey,
+                    {
+                        uploadChunkSize: utils.getInputAsInt(Inputs.UploadChunkSize)
+                    },
+                    enableCrossOsArchive,
+                    customCompression
+                );
+            }
         } else {
             cacheId = await cache.saveCache(
                 cachePaths,

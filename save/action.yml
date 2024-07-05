@@ -15,6 +15,13 @@ inputs:
     description: 'An optional boolean when enabled, allows windows runners to save caches that can be restored on other platforms'
     default: 'false'
     required: false
+  sync:
+    description: 'An optional boolean when enabled, Does not create an archive and syncs the contents of the cache directory directly to the cache location'
+    default: 'false'
+    required: false
+  custom-compression:
+    description: 'Creates tar archive with custom compression'
+    required: false
 runs:
   using: 'node20'
   main: '../dist/save-only/index.js'
