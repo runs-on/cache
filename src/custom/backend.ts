@@ -94,7 +94,7 @@ function getS3Prefix(
         enableCrossOsArchive
     );
 
-    return ["cache", repository, version].join("/");
+    return [repository, version].join("/");
 }
 
 function getS3PrefixSync(
@@ -105,7 +105,7 @@ function getS3PrefixSync(
         paths
     );
 
-    return ["cache", repository, version].join("/");
+    return ["sync", repository, version].join("/");
 }
 
 export async function getCacheEntry(
