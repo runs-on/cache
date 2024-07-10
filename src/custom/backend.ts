@@ -1,7 +1,9 @@
 import {
     S3Client,
     GetObjectCommand,
-    ListObjectsV2Command
+    ListObjectsV2Command,
+    HeadObjectCommand,
+    DeleteObjectCommand
 } from "@aws-sdk/client-s3";
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 import { createReadStream, fstat } from "fs";
@@ -240,6 +242,78 @@ export async function downloadCacheSync(
         const s3Path = `${s3SyncLocation}/${path}`;
         await sync(s3Path, path);
     }
+}
+
+function getLockKey(
+    key: string,
+    paths: string[],
+    { compressionMethod, enableCrossOsArchive }
+) {
+    const s3Prefix = getS3Prefix(paths, {
+        compressionMethod,
+        enableCrossOsArchive
+    });
+    const s3Key = `${s3Prefix}/${key}`;
+    // Create Save lock file in s3 to indicate that save is in progress
+    return `${s3Key}.lock`;
+}
+
+
+export async function acquireSaveLock(
+    key: string,
+    paths: string[],
+    { compressionMethod, enableCrossOsArchive }
+) {
+    const lockKey = getLockKey(key, paths, {
+        compressionMethod,
+        enableCrossOsArchive
+    });
+    core.info(`checking lock file at ${bucketName}/${lockKey}`);
+
+    // check if lock file exists using headObject
+    const headObjectParams = {
+        Bucket: bucketName,
+        Key: lockKey
+    };
+
+    const lockCheck = await s3Client.send(new HeadObjectCommand(headObjectParams));
+    if (lockCheck) {
+        core.info(`Lock file exists at ${bucketName}/${lockKey}`);
+        core.error(
+            `Cache lock file already exists for key ${key}. Another job may be writing to this cache.`
+        );
+        return false;
+    }
+
+    core.info(`Lock file does not exist at ${bucketName}/${lockKey}`);
+    const lockUpload = new Upload({
+        client: s3Client,
+        params: {
+            Bucket: bucketName,
+            Key: lockKey,
+            Body: "in-progress"
+        }
+    }).done();
+    await lockUpload;
+    return true;
+}
+
+export async function releaseSaveLock(
+    key: string,
+    paths: string[],
+    { compressionMethod, enableCrossOsArchive }
+) {
+    const lockKey = getLockKey(key, paths, {
+        compressionMethod,
+        enableCrossOsArchive
+    });
+    // Remove lock file
+    core.info(`Removing lock file at ${bucketName}/${lockKey}`);
+    const deleteLockParams = {
+        Bucket: bucketName,
+        Key: lockKey
+    };
+    await s3Client.send(new DeleteObjectCommand(deleteLockParams));
 }
 
 export async function saveCache(

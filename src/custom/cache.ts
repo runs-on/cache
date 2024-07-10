@@ -277,7 +277,20 @@ export async function saveCache(
 
     core.info(`Archive Path: ${archivePath}`);
 
+    let lockAcquired = false;
+
     try {
+        lockAcquired = await cacheHttpClient.acquireSaveLock(key, paths, {
+            compressionMethod,
+            enableCrossOsArchive
+        });
+
+        if (!lockAcquired) {
+            core.info("Cache lock not acquired.");
+            cacheId = 1;
+            throw new ReserveCacheError("Cache lock not acquired.");
+        }
+
         if (customCompression) {
             const baseDir = process.env["GITHUB_WORKSPACE"] || process.cwd();
             const compressionArgs = customCompression === "none" ? "" : `--use-compress-program=${customCompression}`;
@@ -315,10 +328,16 @@ export async function saveCache(
         }
     } finally {
         // Try to delete the archive to save space
-        try {
-            await utils.unlinkFile(archivePath);
-        } catch (error) {
-            core.debug(`Failed to delete archive: ${error}`);
+        if (lockAcquired) {
+            await cacheHttpClient.releaseSaveLock(key, paths, {
+                compressionMethod,
+                enableCrossOsArchive
+            });
+            try {
+                await utils.unlinkFile(archivePath);
+            } catch (error) {
+                core.debug(`Failed to delete archive: ${error}`);
+            }
         }
     }
 
