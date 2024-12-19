@@ -76980,6 +76980,83 @@ function descending(a, b)
 
 /***/ }),
 
+/***/ 9346:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __rest = (this && this.__rest) || function (s, e) {
+    var t = {};
+    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+        t[p] = s[p];
+    if (s != null && typeof Object.getOwnPropertySymbols === "function")
+        for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
+            if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
+                t[p[i]] = s[p[i]];
+        }
+    return t;
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.addProxyToClient = exports.getHttpsProxy = exports.getHttpProxy = void 0;
+const node_http_handler_1 = __nccwpck_require__(258);
+const hpagent_1 = __nccwpck_require__(4585);
+const getHttpProxy = () => process.env.http_proxy || process.env.HTTP_PROXY || '';
+exports.getHttpProxy = getHttpProxy;
+const getHttpsProxy = () => process.env.https_proxy || process.env.HTTPS_PROXY || '';
+exports.getHttpsProxy = getHttpsProxy;
+const addProxyToClient = (client, _a = {}) => {
+    var { debug = false, httpsOnly = false, throwOnNoProxy = true, agentOptions = {}, httpProxy = (0, exports.getHttpProxy)(), httpsProxy = (0, exports.getHttpsProxy)() } = _a, opts = __rest(_a, ["debug", "httpsOnly", "throwOnNoProxy", "agentOptions", "httpProxy", "httpsProxy"]);
+    const httpAgent = httpProxy
+        ? new hpagent_1.HttpsProxyAgent(Object.assign({ proxy: httpProxy }, agentOptions))
+        : undefined;
+    const httpsAgent = httpsProxy
+        ? new hpagent_1.HttpsProxyAgent(Object.assign({ proxy: httpsProxy }, agentOptions))
+        : undefined;
+    const log = debug ? console.log : () => null;
+    if (httpProxy && httpsProxy) {
+        if (httpsOnly) {
+            log(`Setting https proxy to ${httpsProxy} (httpsOnly enabled with both https and http found in env)`);
+            client.config.requestHandler = new node_http_handler_1.NodeHttpHandler(Object.assign({ httpAgent: httpsAgent, httpsAgent }, opts));
+        }
+        else {
+            log(`Setting http proxy to ${httpProxy} and https proxy to ${httpsProxy}`);
+            client.config.requestHandler = new node_http_handler_1.NodeHttpHandler(Object.assign({ httpAgent,
+                httpsAgent }, opts));
+        }
+        return client;
+    }
+    if (httpProxy && !httpsOnly) {
+        log(`Setting http proxy to ${httpProxy}`);
+        client.config.requestHandler = new node_http_handler_1.NodeHttpHandler(Object.assign({ httpAgent, httpsAgent: httpAgent }, opts));
+    }
+    else if (httpsProxy) {
+        log(`Setting https proxy to ${httpsProxy}`);
+        client.config.requestHandler = new node_http_handler_1.NodeHttpHandler(Object.assign({ httpAgent: httpsAgent, httpsAgent }, opts));
+    }
+    else if (throwOnNoProxy) {
+        log('No proxy found in env, and throwOnNoProxy is set to true, throwing error');
+        throw new Error('Unable to add proxy to AWS SDK client. No proxy found in process.env');
+    }
+    return client;
+};
+exports.addProxyToClient = addProxyToClient;
+
+
+/***/ }),
+
+/***/ 8277:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.addProxyToClient = void 0;
+var add_proxy_1 = __nccwpck_require__(9346);
+Object.defineProperty(exports, "addProxyToClient", ({ enumerable: true, get: function () { return add_proxy_1.addProxyToClient; } }));
+
+
+/***/ }),
+
 /***/ 9417:
 /***/ ((module) => {
 
@@ -79564,6 +79641,140 @@ class XmlNode{
 
 
 module.exports = XmlNode;
+
+/***/ }),
+
+/***/ 4585:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+const https = __nccwpck_require__(5687)
+const http = __nccwpck_require__(3685)
+const { URL } = __nccwpck_require__(7310)
+
+class HttpProxyAgent extends http.Agent {
+  constructor (options) {
+    const { proxy, proxyRequestOptions, ...opts } = options
+    super(opts)
+    this.proxy = typeof proxy === 'string'
+      ? new URL(proxy)
+      : proxy
+    this.proxyRequestOptions = proxyRequestOptions || {}
+  }
+
+  createConnection (options, callback) {
+    const requestOptions = {
+      ...this.proxyRequestOptions,
+      method: 'CONNECT',
+      host: this.proxy.hostname,
+      port: this.proxy.port,
+      path: `${options.host}:${options.port}`,
+      setHost: false,
+      headers: { ...this.proxyRequestOptions.headers, connection: this.keepAlive ? 'keep-alive' : 'close', host: `${options.host}:${options.port}` },
+      agent: false,
+      timeout: options.timeout || 0
+    }
+
+    if (this.proxy.username || this.proxy.password) {
+      const base64 = Buffer.from(`${decodeURIComponent(this.proxy.username || '')}:${decodeURIComponent(this.proxy.password || '')}`).toString('base64')
+      requestOptions.headers['proxy-authorization'] = `Basic ${base64}`
+    }
+
+    if (this.proxy.protocol === 'https:') {
+      requestOptions.servername = this.proxy.hostname
+    }
+
+    const request = (this.proxy.protocol === 'http:' ? http : https).request(requestOptions)
+    request.once('connect', (response, socket, head) => {
+      request.removeAllListeners()
+      socket.removeAllListeners()
+      if (response.statusCode === 200) {
+        callback(null, socket)
+      } else {
+        socket.destroy()
+        callback(new Error(`Bad response: ${response.statusCode}`), null)
+      }
+    })
+
+    request.once('timeout', () => {
+      request.destroy(new Error('Proxy timeout'))
+    })
+
+    request.once('error', err => {
+      request.removeAllListeners()
+      callback(err, null)
+    })
+
+    request.end()
+  }
+}
+
+class HttpsProxyAgent extends https.Agent {
+  constructor (options) {
+    const { proxy, proxyRequestOptions, ...opts } = options
+    super(opts)
+    this.proxy = typeof proxy === 'string'
+      ? new URL(proxy)
+      : proxy
+    this.proxyRequestOptions = proxyRequestOptions || {}
+  }
+
+  createConnection (options, callback) {
+    const requestOptions = {
+      ...this.proxyRequestOptions,
+      method: 'CONNECT',
+      host: this.proxy.hostname,
+      port: this.proxy.port,
+      path: `${options.host}:${options.port}`,
+      setHost: false,
+      headers: { ...this.proxyRequestOptions.headers, connection: this.keepAlive ? 'keep-alive' : 'close', host: `${options.host}:${options.port}` },
+      agent: false,
+      timeout: options.timeout || 0
+    }
+
+    if (this.proxy.username || this.proxy.password) {
+      const base64 = Buffer.from(`${decodeURIComponent(this.proxy.username || '')}:${decodeURIComponent(this.proxy.password || '')}`).toString('base64')
+      requestOptions.headers['proxy-authorization'] = `Basic ${base64}`
+    }
+
+    // Necessary for the TLS check with the proxy to succeed.
+    if (this.proxy.protocol === 'https:') {
+      requestOptions.servername = this.proxy.hostname
+    }
+
+    const request = (this.proxy.protocol === 'http:' ? http : https).request(requestOptions)
+    request.once('connect', (response, socket, head) => {
+      request.removeAllListeners()
+      socket.removeAllListeners()
+      if (response.statusCode === 200) {
+        const secureSocket = super.createConnection({ ...options, socket })
+        callback(null, secureSocket)
+      } else {
+        socket.destroy()
+        callback(new Error(`Bad response: ${response.statusCode}`), null)
+      }
+    })
+
+    request.once('timeout', () => {
+      request.destroy(new Error('Proxy timeout'))
+    })
+
+    request.once('error', err => {
+      request.removeAllListeners()
+      callback(err, null)
+    })
+
+    request.end()
+  }
+}
+
+module.exports = {
+  HttpProxyAgent,
+  HttpsProxyAgent
+}
+
 
 /***/ }),
 
@@ -93827,6 +94038,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.saveCache = exports.downloadCache = exports.getCacheEntry = exports.getCacheVersion = void 0;
 const client_s3_1 = __nccwpck_require__(9250);
+const aws_sdk_v3_proxy_1 = __nccwpck_require__(8277);
 const { getSignedUrl } = __nccwpck_require__(5052);
 const fs_1 = __nccwpck_require__(7147);
 const crypto = __importStar(__nccwpck_require__(6113));
@@ -93854,7 +94066,7 @@ const uploadQueueSize = Number(process.env.UPLOAD_QUEUE_SIZE || "4");
 const uploadPartSize = Number(process.env.UPLOAD_PART_SIZE || "32") * 1024 * 1024;
 const downloadQueueSize = Number(process.env.DOWNLOAD_QUEUE_SIZE || "8");
 const downloadPartSize = Number(process.env.DOWNLOAD_PART_SIZE || "16") * 1024 * 1024;
-const s3Client = new client_s3_1.S3Client({ region, forcePathStyle });
+const s3Client = (0, aws_sdk_v3_proxy_1.addProxyToClient)(new client_s3_1.S3Client({ region, forcePathStyle }));
 function getCacheVersion(paths, compressionMethod, enableCrossOsArchive = false) {
     // don't pass changes upstream
     const components = paths.slice();
