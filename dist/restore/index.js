@@ -71482,11 +71482,22 @@ __name(writeRequestBody, "writeRequestBody");
 function writeBody(httpRequest, body) {
   if (body instanceof import_stream.Readable) {
     body.pipe(httpRequest);
-  } else if (body) {
-    httpRequest.end(Buffer.from(body));
-  } else {
-    httpRequest.end();
+    return;
   }
+  if (body) {
+    if (Buffer.isBuffer(body) || typeof body === "string") {
+      httpRequest.end(body);
+      return;
+    }
+    const uint8 = body;
+    if (typeof uint8 === "object" && uint8.buffer && typeof uint8.byteOffset === "number" && typeof uint8.byteLength === "number") {
+      httpRequest.end(Buffer.from(uint8.buffer, uint8.byteOffset, uint8.byteLength));
+      return;
+    }
+    httpRequest.end(Buffer.from(body));
+    return;
+  }
+  httpRequest.end();
 }
 __name(writeBody, "writeBody");
 
@@ -71494,6 +71505,7 @@ __name(writeBody, "writeBody");
 var DEFAULT_REQUEST_TIMEOUT = 0;
 var _NodeHttpHandler = class _NodeHttpHandler {
   constructor(options) {
+    this.socketWarningTimestamp = 0;
     // Node http handler is hard-coded to http/1.1: https://github.com/nodejs/node/blob/ff5664b83b89c55e4ab5d5f60068fb457f1f5872/lib/_http_server.js#L286
     this.metadata = { handlerProtocol: "http/1.1" };
     this.configProvider = new Promise((resolve, reject) => {
@@ -71516,6 +71528,39 @@ var _NodeHttpHandler = class _NodeHttpHandler {
     }
     return new _NodeHttpHandler(instanceOrOptions);
   }
+  /**
+   * @internal
+   *
+   * @param agent - http(s) agent in use by the NodeHttpHandler instance.
+   * @returns timestamp of last emitted warning.
+   */
+  static checkSocketUsage(agent, socketWarningTimestamp) {
+    var _a, _b;
+    const { sockets, requests, maxSockets } = agent;
+    if (typeof maxSockets !== "number" || maxSockets === Infinity) {
+      return socketWarningTimestamp;
+    }
+    const interval = 15e3;
+    if (Date.now() - interval < socketWarningTimestamp) {
+      return socketWarningTimestamp;
+    }
+    if (sockets && requests) {
+      for (const origin in sockets) {
+        const socketsInUse = ((_a = sockets[origin]) == null ? void 0 : _a.length) ?? 0;
+        const requestsEnqueued = ((_b = requests[origin]) == null ? void 0 : _b.length) ?? 0;
+        if (socketsInUse >= maxSockets && requestsEnqueued >= 2 * maxSockets) {
+          console.warn(
+            "@smithy/node-http-handler:WARN",
+            `socket usage at capacity=${socketsInUse} and ${requestsEnqueued} additional requests are enqueued.`,
+            "See https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/node-configuring-maxsockets.html",
+            "or increase socketAcquisitionWarningTimeout=(millis) in the NodeHttpHandler config."
+          );
+          return Date.now();
+        }
+      }
+    }
+    return socketWarningTimestamp;
+  }
   resolveDefaultConfig(options) {
     const { requestTimeout, connectionTimeout, socketTimeout, httpAgent, httpsAgent } = options || {};
     const keepAlive = true;
@@ -71523,8 +71568,18 @@ var _NodeHttpHandler = class _NodeHttpHandler {
     return {
       connectionTimeout,
       requestTimeout: requestTimeout ?? socketTimeout,
-      httpAgent: httpAgent || new import_http.Agent({ keepAlive, maxSockets }),
-      httpsAgent: httpsAgent || new import_https.Agent({ keepAlive, maxSockets })
+      httpAgent: (() => {
+        if (httpAgent instanceof import_http.Agent || typeof (httpAgent == null ? void 0 : httpAgent.destroy) === "function") {
+          return httpAgent;
+        }
+        return new import_http.Agent({ keepAlive, maxSockets, ...httpAgent });
+      })(),
+      httpsAgent: (() => {
+        if (httpsAgent instanceof import_https.Agent || typeof (httpsAgent == null ? void 0 : httpsAgent.destroy) === "function") {
+          return httpsAgent;
+        }
+        return new import_https.Agent({ keepAlive, maxSockets, ...httpsAgent });
+      })()
     };
   }
   destroy() {
@@ -71536,10 +71591,12 @@ var _NodeHttpHandler = class _NodeHttpHandler {
     if (!this.config) {
       this.config = await this.configProvider;
     }
+    let socketCheckTimeoutId;
     return new Promise((_resolve, _reject) => {
       let writeRequestBodyPromise = void 0;
       const resolve = /* @__PURE__ */ __name(async (arg) => {
         await writeRequestBodyPromise;
+        clearTimeout(socketCheckTimeoutId);
         _resolve(arg);
       }, "resolve");
       const reject = /* @__PURE__ */ __name(async (arg) => {
@@ -71556,6 +71613,10 @@ var _NodeHttpHandler = class _NodeHttpHandler {
         return;
       }
       const isSSL = request.protocol === "https:";
+      const agent = isSSL ? this.config.httpsAgent : this.config.httpAgent;
+      socketCheckTimeoutId = setTimeout(() => {
+        this.socketWarningTimestamp = _NodeHttpHandler.checkSocketUsage(agent, this.socketWarningTimestamp);
+      }, this.config.socketAcquisitionWarningTimeout ?? (this.config.requestTimeout ?? 2e3) + (this.config.connectionTimeout ?? 1e3));
       const queryString = (0, import_querystring_builder.buildQueryString)(request.query || {});
       let auth = void 0;
       if (request.username != null || request.password != null) {
@@ -71576,7 +71637,7 @@ var _NodeHttpHandler = class _NodeHttpHandler {
         method: request.method,
         path,
         port: request.port,
-        agent: isSSL ? this.config.httpsAgent : this.config.httpAgent,
+        agent,
         auth
       };
       const requestFunc = isSSL ? import_https.request : import_http.request;
@@ -76919,6 +76980,83 @@ function descending(a, b)
 
 /***/ }),
 
+/***/ 9346:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __rest = (this && this.__rest) || function (s, e) {
+    var t = {};
+    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+        t[p] = s[p];
+    if (s != null && typeof Object.getOwnPropertySymbols === "function")
+        for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
+            if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
+                t[p[i]] = s[p[i]];
+        }
+    return t;
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.addProxyToClient = exports.getHttpsProxy = exports.getHttpProxy = void 0;
+const node_http_handler_1 = __nccwpck_require__(258);
+const hpagent_1 = __nccwpck_require__(4585);
+const getHttpProxy = () => process.env.http_proxy || process.env.HTTP_PROXY || '';
+exports.getHttpProxy = getHttpProxy;
+const getHttpsProxy = () => process.env.https_proxy || process.env.HTTPS_PROXY || '';
+exports.getHttpsProxy = getHttpsProxy;
+const addProxyToClient = (client, _a = {}) => {
+    var { debug = false, httpsOnly = false, throwOnNoProxy = true, agentOptions = {}, httpProxy = (0, exports.getHttpProxy)(), httpsProxy = (0, exports.getHttpsProxy)() } = _a, opts = __rest(_a, ["debug", "httpsOnly", "throwOnNoProxy", "agentOptions", "httpProxy", "httpsProxy"]);
+    const httpAgent = httpProxy
+        ? new hpagent_1.HttpsProxyAgent(Object.assign({ proxy: httpProxy }, agentOptions))
+        : undefined;
+    const httpsAgent = httpsProxy
+        ? new hpagent_1.HttpsProxyAgent(Object.assign({ proxy: httpsProxy }, agentOptions))
+        : undefined;
+    const log = debug ? console.log : () => null;
+    if (httpProxy && httpsProxy) {
+        if (httpsOnly) {
+            log(`Setting https proxy to ${httpsProxy} (httpsOnly enabled with both https and http found in env)`);
+            client.config.requestHandler = new node_http_handler_1.NodeHttpHandler(Object.assign({ httpAgent: httpsAgent, httpsAgent }, opts));
+        }
+        else {
+            log(`Setting http proxy to ${httpProxy} and https proxy to ${httpsProxy}`);
+            client.config.requestHandler = new node_http_handler_1.NodeHttpHandler(Object.assign({ httpAgent,
+                httpsAgent }, opts));
+        }
+        return client;
+    }
+    if (httpProxy && !httpsOnly) {
+        log(`Setting http proxy to ${httpProxy}`);
+        client.config.requestHandler = new node_http_handler_1.NodeHttpHandler(Object.assign({ httpAgent, httpsAgent: httpAgent }, opts));
+    }
+    else if (httpsProxy) {
+        log(`Setting https proxy to ${httpsProxy}`);
+        client.config.requestHandler = new node_http_handler_1.NodeHttpHandler(Object.assign({ httpAgent: httpsAgent, httpsAgent }, opts));
+    }
+    else if (throwOnNoProxy) {
+        log('No proxy found in env, and throwOnNoProxy is set to true, throwing error');
+        throw new Error('Unable to add proxy to AWS SDK client. No proxy found in process.env');
+    }
+    return client;
+};
+exports.addProxyToClient = addProxyToClient;
+
+
+/***/ }),
+
+/***/ 8277:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.addProxyToClient = void 0;
+var add_proxy_1 = __nccwpck_require__(9346);
+Object.defineProperty(exports, "addProxyToClient", ({ enumerable: true, get: function () { return add_proxy_1.addProxyToClient; } }));
+
+
+/***/ }),
+
 /***/ 9417:
 /***/ ((module) => {
 
@@ -79503,6 +79641,140 @@ class XmlNode{
 
 
 module.exports = XmlNode;
+
+/***/ }),
+
+/***/ 4585:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+const https = __nccwpck_require__(5687)
+const http = __nccwpck_require__(3685)
+const { URL } = __nccwpck_require__(7310)
+
+class HttpProxyAgent extends http.Agent {
+  constructor (options) {
+    const { proxy, proxyRequestOptions, ...opts } = options
+    super(opts)
+    this.proxy = typeof proxy === 'string'
+      ? new URL(proxy)
+      : proxy
+    this.proxyRequestOptions = proxyRequestOptions || {}
+  }
+
+  createConnection (options, callback) {
+    const requestOptions = {
+      ...this.proxyRequestOptions,
+      method: 'CONNECT',
+      host: this.proxy.hostname,
+      port: this.proxy.port,
+      path: `${options.host}:${options.port}`,
+      setHost: false,
+      headers: { ...this.proxyRequestOptions.headers, connection: this.keepAlive ? 'keep-alive' : 'close', host: `${options.host}:${options.port}` },
+      agent: false,
+      timeout: options.timeout || 0
+    }
+
+    if (this.proxy.username || this.proxy.password) {
+      const base64 = Buffer.from(`${decodeURIComponent(this.proxy.username || '')}:${decodeURIComponent(this.proxy.password || '')}`).toString('base64')
+      requestOptions.headers['proxy-authorization'] = `Basic ${base64}`
+    }
+
+    if (this.proxy.protocol === 'https:') {
+      requestOptions.servername = this.proxy.hostname
+    }
+
+    const request = (this.proxy.protocol === 'http:' ? http : https).request(requestOptions)
+    request.once('connect', (response, socket, head) => {
+      request.removeAllListeners()
+      socket.removeAllListeners()
+      if (response.statusCode === 200) {
+        callback(null, socket)
+      } else {
+        socket.destroy()
+        callback(new Error(`Bad response: ${response.statusCode}`), null)
+      }
+    })
+
+    request.once('timeout', () => {
+      request.destroy(new Error('Proxy timeout'))
+    })
+
+    request.once('error', err => {
+      request.removeAllListeners()
+      callback(err, null)
+    })
+
+    request.end()
+  }
+}
+
+class HttpsProxyAgent extends https.Agent {
+  constructor (options) {
+    const { proxy, proxyRequestOptions, ...opts } = options
+    super(opts)
+    this.proxy = typeof proxy === 'string'
+      ? new URL(proxy)
+      : proxy
+    this.proxyRequestOptions = proxyRequestOptions || {}
+  }
+
+  createConnection (options, callback) {
+    const requestOptions = {
+      ...this.proxyRequestOptions,
+      method: 'CONNECT',
+      host: this.proxy.hostname,
+      port: this.proxy.port,
+      path: `${options.host}:${options.port}`,
+      setHost: false,
+      headers: { ...this.proxyRequestOptions.headers, connection: this.keepAlive ? 'keep-alive' : 'close', host: `${options.host}:${options.port}` },
+      agent: false,
+      timeout: options.timeout || 0
+    }
+
+    if (this.proxy.username || this.proxy.password) {
+      const base64 = Buffer.from(`${decodeURIComponent(this.proxy.username || '')}:${decodeURIComponent(this.proxy.password || '')}`).toString('base64')
+      requestOptions.headers['proxy-authorization'] = `Basic ${base64}`
+    }
+
+    // Necessary for the TLS check with the proxy to succeed.
+    if (this.proxy.protocol === 'https:') {
+      requestOptions.servername = this.proxy.hostname
+    }
+
+    const request = (this.proxy.protocol === 'http:' ? http : https).request(requestOptions)
+    request.once('connect', (response, socket, head) => {
+      request.removeAllListeners()
+      socket.removeAllListeners()
+      if (response.statusCode === 200) {
+        const secureSocket = super.createConnection({ ...options, socket })
+        callback(null, secureSocket)
+      } else {
+        socket.destroy()
+        callback(new Error(`Bad response: ${response.statusCode}`), null)
+      }
+    })
+
+    request.once('timeout', () => {
+      request.destroy(new Error('Proxy timeout'))
+    })
+
+    request.once('error', err => {
+      request.removeAllListeners()
+      callback(err, null)
+    })
+
+    request.end()
+  }
+}
+
+module.exports = {
+  HttpProxyAgent,
+  HttpsProxyAgent
+}
+
 
 /***/ }),
 
@@ -93766,6 +94038,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.saveCache = exports.downloadCache = exports.getCacheEntry = exports.getCacheVersion = void 0;
 const client_s3_1 = __nccwpck_require__(9250);
+const aws_sdk_v3_proxy_1 = __nccwpck_require__(8277);
 const { getSignedUrl } = __nccwpck_require__(5052);
 const fs_1 = __nccwpck_require__(7147);
 const crypto = __importStar(__nccwpck_require__(6113));
@@ -93793,7 +94066,7 @@ const uploadQueueSize = Number(process.env.UPLOAD_QUEUE_SIZE || "4");
 const uploadPartSize = Number(process.env.UPLOAD_PART_SIZE || "32") * 1024 * 1024;
 const downloadQueueSize = Number(process.env.DOWNLOAD_QUEUE_SIZE || "8");
 const downloadPartSize = Number(process.env.DOWNLOAD_PART_SIZE || "16") * 1024 * 1024;
-const s3Client = new client_s3_1.S3Client({ region, forcePathStyle });
+const s3Client = (0, aws_sdk_v3_proxy_1.addProxyToClient)(new client_s3_1.S3Client({ region, forcePathStyle }));
 function getCacheVersion(paths, compressionMethod, enableCrossOsArchive = false) {
     // don't pass changes upstream
     const components = paths.slice();
