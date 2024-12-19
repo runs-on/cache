@@ -3,6 +3,7 @@ import {
     GetObjectCommand,
     ListObjectsV2Command
 } from "@aws-sdk/client-s3";
+import { addProxyToClient } from 'aws-sdk-v3-proxy';
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 import { createReadStream } from "fs";
 import * as crypto from "crypto";
@@ -51,7 +52,7 @@ const downloadQueueSize = Number(process.env.DOWNLOAD_QUEUE_SIZE || "8");
 const downloadPartSize =
     Number(process.env.DOWNLOAD_PART_SIZE || "16") * 1024 * 1024;
 
-const s3Client = new S3Client({ region, forcePathStyle });
+const s3Client = addProxyToClient(new S3Client({ region, forcePathStyle }));
 
 export function getCacheVersion(
     paths: string[],
