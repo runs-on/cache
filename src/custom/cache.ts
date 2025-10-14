@@ -150,14 +150,6 @@ export async function restoreCache(
             );
         }
 
-        // Minimum size check - a valid tar archive needs at least 512 bytes for header
-        const MIN_ARCHIVE_SIZE = 512;
-        if (archiveFileSize < MIN_ARCHIVE_SIZE) {
-            throw new DownloadValidationError(
-                `Downloaded cache archive is too small (${archiveFileSize} bytes). Expected at least ${MIN_ARCHIVE_SIZE} bytes for a valid archive.`
-            );
-        }
-
         await extractTar(archivePath, compressionMethod);
         core.info("Cache restored successfully");
 

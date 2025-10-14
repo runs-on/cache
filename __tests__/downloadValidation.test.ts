@@ -154,43 +154,6 @@ describe("Download Validation", () => {
             );
         });
 
-        it("should throw DownloadValidationError for files too small", async () => {
-            // Mock the cache lookup to return a valid cache entry
-            const mockCacheHttpClient = require("../src/custom/backend");
-            jest.spyOn(mockCacheHttpClient, "getCacheEntry").mockResolvedValue({
-                cacheKey: "test-key",
-                archiveLocation: "https://s3.example.com/cache.tar.gz"
-            });
-
-            // Mock the download to succeed
-            jest.spyOn(mockCacheHttpClient, "downloadCache").mockResolvedValue(
-                undefined
-            );
-
-            // Mock utils to return small file size (less than 512 bytes)
-            const mockUtils = require("@actions/cache/lib/internal/cacheUtils");
-            jest.spyOn(mockUtils, "getArchiveFileSizeInBytes").mockReturnValue(
-                100
-            );
-            jest.spyOn(mockUtils, "createTempDirectory").mockResolvedValue(
-                "/tmp"
-            );
-            jest.spyOn(mockUtils, "getCacheFileName").mockReturnValue(
-                "cache.tar.gz"
-            );
-
-            const coreSpy = jest.spyOn(core, "warning");
-
-            const result = await restoreCache(["/test/path"], "test-key");
-
-            expect(result).toBeUndefined(); // Should return undefined on validation failure
-            expect(coreSpy).toHaveBeenCalledWith(
-                expect.stringContaining(
-                    "Cache download validation failed: Downloaded cache archive is too small (100 bytes)"
-                )
-            );
-        });
-
         it("should succeed with valid file size", async () => {
             // Mock the cache lookup to return a valid cache entry
             const mockCacheHttpClient = require("../src/custom/backend");
