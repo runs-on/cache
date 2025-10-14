@@ -29,10 +29,7 @@ jobs:
       shell: bash
       run: |
         __tests__/create-cache-files.sh ${{ runner.os }} test-cache
-        # 5GB
-        # curl -o test-cache/ubuntu.iso https://releases.ubuntu.com/22.04.3/ubuntu-22.04.3-desktop-amd64.iso
-        # 2Gb
-        curl -o test-cache/ubuntu.iso https://releases.ubuntu.com/jammy/ubuntu-22.04.3-live-server-amd64.iso
+        dd if=/dev/urandom of=test-cache/random-1gb.bin bs=1M count=1024
     - name: Generate files outside working directory
       shell: bash
       run: __tests__/create-cache-files.sh ${{ runner.os }} ~/test-cache
