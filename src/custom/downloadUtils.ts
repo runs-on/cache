@@ -314,10 +314,11 @@ async function downloadSegment(
         );
     }
 
+    const buffer = await partRes.readBodyBuffer();
     return {
         offset,
-        count,
-        buffer: await partRes.readBodyBuffer()
+        count: buffer.length, // Use actual buffer length instead of requested count
+        buffer
     };
 }
 
