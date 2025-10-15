@@ -49,4 +49,4 @@ Be aware of S3 transfer costs if your runners are not in the same AWS region as 
 
 ## Action pinning
 
-Contrary to the upstream action, `v4` is a branch. As such, any tag pushed to this runs-on/cache repository comes from upstream and does NOT contain the changes for the S3 backend support. Please pin to a specific commmit from the `v4` branch if needed.
+Contrary to the upstream action, `v4` is a branch. When merging a stable release from upstream (e.g. v4.3.0), I will publish an equivalent tag in this repository. You can either pin to that tag, or a specific commit.
