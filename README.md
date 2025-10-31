@@ -45,6 +45,7 @@ Be aware of S3 transfer costs if your runners are not in the same AWS region as 
 * `RUNS_ON_S3_BUCKET_ENDPOINT`: if set, the action will use this endpoint to connect to the bucket. This is useful if you are using AWS's S3 transfer acceleration or a non-AWS S3-compatible service.
 * `RUNS_ON_RUNNER_NAME`: when running on RunsOn, where this environment variable is non-empty, existing AWS credentials from the environment will be discarded. If you want to preserve existing environment variables, set this to the empty string `""`.
 * `RUNS_ON_S3_FORCE_PATH_STYLE` or `AWS_S3_FORCE_PATH_STYLE`: if one of those environment variables equals the string `"true"`, then the S3 client will be configured to force the path style.
+* `RUNS_ON_S3_DISABLE_PREFIX`: when this environment variable equals the string `"true"`, the default cache prefix (`cache/<repo>/version`) will not be used.
 
 
 ## Action pinning
