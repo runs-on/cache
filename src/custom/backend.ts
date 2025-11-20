@@ -247,10 +247,38 @@ export async function saveCache(
         )} MB (${cacheSize} B)`
     );
 
-    const totalParts = Math.ceil(cacheSize / uploadPartSize);
     core.info(`Uploading cache from ${archivePath} to ${bucketName}/${s3Key}`);
+
+    const totalBytes = cacheSize;
+    let lastLoggedBytes = 0;
+    let lastLoggedTime = Date.now();
+
     multipartUpload.on("httpUploadProgress", progress => {
-        core.info(`Uploaded part ${progress.part}/${totalParts}.`);
+        const uploadedBytes = progress.loaded ?? 0;
+        if (uploadedBytes <= lastLoggedBytes) {
+            return;
+        }
+
+        const now = Date.now();
+        const elapsedSeconds = (now - lastLoggedTime) / 1000;
+        if (elapsedSeconds <= 0) {
+            return;
+        }
+
+        const bytesDelta = uploadedBytes - lastLoggedBytes;
+        const mbPerSec = bytesDelta / elapsedSeconds / (1024 * 1024);
+        const percent = totalBytes
+            ? ((uploadedBytes / totalBytes) * 100).toFixed(1)
+            : "0.0";
+
+        core.info(
+            `Uploaded ${uploadedBytes} of ${totalBytes} (${percent}%), ${mbPerSec.toFixed(
+                1
+            )} MBs/sec`
+        );
+
+        lastLoggedTime = now;
+        lastLoggedBytes = uploadedBytes;
     });
 
     await multipartUpload.done();
