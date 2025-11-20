@@ -5,11 +5,19 @@ import * as path from "path";
 import * as utils from "@actions/cache/lib/internal/cacheUtils";
 import * as cacheHttpClient from "./backend";
 import {
-    createTar,
-    extractTar,
-    listTar
+    CompressionMethod
+} from "@actions/cache/lib/internal/constants";
+import {
+    createTar as defaultCreateTar,
+    extractTar as defaultExtractTar,
+    listTar as defaultListTar
 } from "@actions/cache/lib/internal/tar";
 import { DownloadOptions, UploadOptions } from "@actions/cache/lib/options";
+import {
+    createTar as uncompressedCreateTar,
+    extractTar as uncompressedExtractTar,
+    listTar as uncompressedListTar
+} from "./utils/uncompressedTar";
 
 export class ValidationError extends Error {
     constructor(message: string) {
@@ -33,6 +41,76 @@ export class DownloadValidationError extends Error {
         this.name = "DownloadValidationError";
         Object.setPrototypeOf(this, DownloadValidationError.prototype);
     }
+}
+
+type TarFunctions = {
+    createTar: (
+        archiveFolder: string,
+        sourceDirectories: string[],
+        compressionMethod: CompressionMethod
+    ) => Promise<void>;
+    extractTar: (
+        archivePath: string,
+        compressionMethod: CompressionMethod
+    ) => Promise<void>;
+    listTar: (
+        archivePath: string,
+        compressionMethod: CompressionMethod
+    ) => Promise<void>;
+};
+
+type CompressionMode = "none" | "minimal" | "auto";
+
+function resolveCompressionMode(value: string | undefined): CompressionMode {
+    const normalized = value?.toLowerCase();
+    if (normalized === "auto" || normalized === "minimal") {
+        return normalized;
+    }
+
+    return "none";
+}
+
+const compressionMode = resolveCompressionMode(
+    process.env.RUNS_ON_CACHE_COMPRESSION
+);
+const skipCompression = compressionMode === "none";
+const forceMinimalCompression = compressionMode === "minimal";
+
+const tarFunctions: TarFunctions = skipCompression
+    ? {
+        createTar: uncompressedCreateTar,
+        extractTar: uncompressedExtractTar,
+        listTar: uncompressedListTar
+    }
+    : {
+        createTar: defaultCreateTar,
+        extractTar: defaultExtractTar,
+        listTar: defaultListTar
+    };
+
+let compressionModeLogged = false;
+
+async function resolveCompressionMethod(): Promise<CompressionMethod> {
+    if (!compressionModeLogged) {
+        if (skipCompression) {
+            core.info(
+                "Cache compression mode: none (archives stored without compression)."
+            );
+        } else if (forceMinimalCompression) {
+            core.info(
+                "Cache compression mode: minimal (forcing gzip compression)."
+            );
+        } else {
+            core.debug("Cache compression mode: auto (tool defaults).");
+        }
+        compressionModeLogged = true;
+    }
+
+    if (forceMinimalCompression) {
+        return CompressionMethod.Gzip;
+    }
+
+    return utils.getCompressionMethod();
 }
 
 function checkPaths(paths: string[]): void {
@@ -101,7 +179,7 @@ export async function restoreCache(
         checkKey(key);
     }
 
-    const compressionMethod = await utils.getCompressionMethod();
+    const compressionMethod = await resolveCompressionMethod();
     let archivePath = "";
     try {
         // path are needed to compute version
@@ -133,7 +211,7 @@ export async function restoreCache(
         );
 
         if (core.isDebug()) {
-            await listTar(archivePath, compressionMethod);
+            await tarFunctions.listTar(archivePath, compressionMethod);
         }
 
         const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
@@ -150,7 +228,7 @@ export async function restoreCache(
             );
         }
 
-        await extractTar(archivePath, compressionMethod);
+        await tarFunctions.extractTar(archivePath, compressionMethod);
         core.info("Cache restored successfully");
 
         return cacheEntry.cacheKey;
@@ -197,7 +275,7 @@ export async function saveCache(
     checkPaths(paths);
     checkKey(key);
 
-    const compressionMethod = await utils.getCompressionMethod();
+    const compressionMethod = await resolveCompressionMethod();
     let cacheId = -1;
 
     const cachePaths = await utils.resolvePaths(paths);
@@ -219,9 +297,9 @@ export async function saveCache(
     core.debug(`Archive Path: ${archivePath}`);
 
     try {
-        await createTar(archiveFolder, cachePaths, compressionMethod);
+        await tarFunctions.createTar(archiveFolder, cachePaths, compressionMethod);
         if (core.isDebug()) {
-            await listTar(archivePath, compressionMethod);
+            await tarFunctions.listTar(archivePath, compressionMethod);
         }
         const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
         core.debug(`File Size: ${archiveFileSize}`);
