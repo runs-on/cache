@@ -249,38 +249,86 @@ export async function saveCache(
 
     core.info(`Uploading cache from ${archivePath} to ${bucketName}/${s3Key}`);
 
-    const totalBytes = cacheSize;
-    let lastLoggedBytes = 0;
-    let lastLoggedTime = Date.now();
+    const progress = new UploadProgress(cacheSize);
+    progress.startDisplayTimer();
 
-    multipartUpload.on("httpUploadProgress", progress => {
-        const uploadedBytes = progress.loaded ?? 0;
-        if (uploadedBytes <= lastLoggedBytes) {
-            return;
+    multipartUpload.on("httpUploadProgress", event => {
+        if (typeof event.loaded === "number") {
+            progress.setUploadedBytes(event.loaded);
         }
-
-        const now = Date.now();
-        const elapsedSeconds = (now - lastLoggedTime) / 1000;
-        if (elapsedSeconds <= 0) {
-            return;
-        }
-
-        const bytesDelta = uploadedBytes - lastLoggedBytes;
-        const mbPerSec = bytesDelta / elapsedSeconds / (1024 * 1024);
-        const percent = totalBytes
-            ? ((uploadedBytes / totalBytes) * 100).toFixed(1)
-            : "0.0";
-
-        core.info(
-            `Uploaded ${uploadedBytes} of ${totalBytes} (${percent}%), ${mbPerSec.toFixed(
-                1
-            )} MBs/sec`
-        );
-
-        lastLoggedTime = now;
-        lastLoggedBytes = uploadedBytes;
     });
 
-    await multipartUpload.done();
+    try {
+        await multipartUpload.done();
+        progress.setUploadedBytes(cacheSize);
+    } finally {
+        progress.stopDisplayTimer();
+    }
     core.info(`Cache saved successfully.`);
+}
+
+class UploadProgress {
+    private readonly totalBytes: number;
+    private uploadedBytes = 0;
+    private readonly startTime = Date.now();
+    private displayedComplete = false;
+    private timer?: ReturnType<typeof setTimeout>;
+
+    constructor(totalBytes: number) {
+        this.totalBytes = totalBytes;
+    }
+
+    setUploadedBytes(bytes: number): void {
+        if (bytes > this.uploadedBytes) {
+            this.uploadedBytes = bytes;
+        }
+    }
+
+    display(): void {
+        if (this.displayedComplete) {
+            return;
+        }
+
+        const percentage = this.totalBytes
+            ? ((this.uploadedBytes / this.totalBytes) * 100).toFixed(1)
+            : "0.0";
+        const elapsedSeconds = Math.max(
+            (Date.now() - this.startTime) / 1000,
+            0.001
+        );
+        const mbPerSec = (
+            this.uploadedBytes /
+            (1024 * 1024) /
+            elapsedSeconds
+        ).toFixed(1);
+
+        core.info(
+            `Uploaded ${this.uploadedBytes} of ${this.totalBytes} (${percentage}%), ${mbPerSec} MBs/sec`
+        );
+
+        if (this.uploadedBytes >= this.totalBytes) {
+            this.displayedComplete = true;
+        }
+    }
+
+    startDisplayTimer(intervalMs = 1000): void {
+        const tick = (): void => {
+            this.display();
+
+            if (!this.displayedComplete) {
+                this.timer = setTimeout(tick, intervalMs);
+            }
+        };
+
+        this.timer = setTimeout(tick, intervalMs);
+    }
+
+    stopDisplayTimer(): void {
+        if (this.timer) {
+            clearTimeout(this.timer);
+            this.timer = undefined;
+        }
+
+        this.display();
+    }
 }
