@@ -5,6 +5,7 @@ import {
     ManifestFilename,
     SystemTarPathOnWindows
 } from "@actions/cache/lib/internal/constants";
+import type { ExecOptions } from "@actions/exec";
 import { exec } from "@actions/exec";
 import * as io from "@actions/io";
 import { existsSync, writeFileSync } from "fs";
@@ -85,6 +86,14 @@ function getExecEnv(): { [key: string]: string } {
     return sanitizeEnv({ ...process.env, MSYS: "winsymlinks:nativestrict" });
 }
 
+async function runTar(
+    tool: TarToolInfo,
+    args: string[],
+    options?: ExecOptions & { cwd?: string }
+): Promise<void> {
+    await exec(`"${tool.path}"`, args, options);
+}
+
 export async function createTar(
     archiveFolder: string,
     sourceDirectories: string[],
@@ -115,7 +124,7 @@ export async function createTar(
 
     appendPlatformSpecificArgs(tool, args);
 
-    await exec(tool.path, args, {
+    await runTar(tool, args, {
         cwd: archiveFolder,
         env: getExecEnv()
     });
@@ -125,6 +134,7 @@ export async function extractTar(
     archivePath: string,
     _compressionMethod: CompressionMethod
 ): Promise<void> {
+    void _compressionMethod;
     const tool = await getTarTool();
     const workingDirectory = normalizeForTar(getWorkingDirectory());
 
@@ -140,7 +150,7 @@ export async function extractTar(
 
     appendPlatformSpecificArgs(tool, args);
 
-    await exec(tool.path, args, {
+    await runTar(tool, args, {
         env: getExecEnv()
     });
 }
@@ -149,13 +159,14 @@ export async function listTar(
     archivePath: string,
     _compressionMethod: CompressionMethod
 ): Promise<void> {
+    void _compressionMethod;
     const tool = await getTarTool();
 
     const args = ["-tf", normalizeForTar(archivePath), "-P"];
 
     appendPlatformSpecificArgs(tool, args);
 
-    await exec(tool.path, args, {
+    await runTar(tool, args, {
         env: getExecEnv()
     });
 }
