@@ -61,20 +61,10 @@ type TarFunctions = {
 
 type CompressionMode = "none" | "minimal" | "auto";
 
-function resolveCompressionMode(value: string | undefined): CompressionMode {
-    const normalized = value?.toLowerCase();
-    if (normalized === "auto" || normalized === "minimal") {
-        return normalized;
-    }
-
-    return "none";
-}
-
-const compressionMode = resolveCompressionMode(
-    process.env.RUNS_ON_CACHE_COMPRESSION
-);
-const skipCompression = compressionMode === "none";
-const forceMinimalCompression = compressionMode === "minimal";
+// Force no compression regardless of RUNS_ON_CACHE_COMPRESSION to guarantee raw tar archives
+const compressionMode: CompressionMode = "none";
+const skipCompression = true;
+const forceMinimalCompression = false;
 
 const tarFunctions: TarFunctions = skipCompression
     ? {
