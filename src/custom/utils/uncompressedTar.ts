@@ -93,10 +93,12 @@ export async function createTar(
     const tool = await getTarTool();
     const cacheFileName = utils.getCacheFileName(compressionMethod);
     const normalizedArchiveName = normalizeForTar(cacheFileName);
-    const manifestPath = path.join(archiveFolder, ManifestFilename);
+    const normalizedManifestPath = normalizeForTar(
+        path.join(archiveFolder, ManifestFilename)
+    );
     const workingDirectory = normalizeForTar(getWorkingDirectory());
 
-    writeFileSync(manifestPath, sourceDirectories.join("\n"));
+    writeFileSync(normalizedManifestPath, sourceDirectories.join("\n"));
 
     const args = [
         "--posix",
