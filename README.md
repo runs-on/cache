@@ -46,6 +46,25 @@ Be aware of S3 transfer costs if your runners are not in the same AWS region as 
 * `RUNS_ON_RUNNER_NAME`: when running on RunsOn, where this environment variable is non-empty, existing AWS credentials from the environment will be discarded. If you want to preserve existing environment variables, set this to the empty string `""`.
 * `RUNS_ON_S3_FORCE_PATH_STYLE` or `AWS_S3_FORCE_PATH_STYLE`: if one of those environment variables equals the string `"true"`, then the S3 client will be configured to force the path style.
 
+## Compression level input
+
+All variants of this action (`runs-on/cache`, `runs-on/cache/restore`, and `runs-on/cache/save`) accept a `compression-level` input. Set it to any integer from `0` to `9`:
+
+* `0` (default) keeps using raw tar archives with no compression – the fastest option for large caches.
+* `1-9` enable gzip compression at the requested level. Higher values trade additional CPU for slightly smaller archives.
+
+Example:
+
+```yaml
+- uses: runs-on/cache@v4
+  with:
+    path: ~/.npm
+    key: node-deps-${{ hashFiles('package-lock.json') }}
+    compression-level: 3
+```
+
+When gzip compression is enabled, both standard GitHub caches and RunsOn's S3 backend honor the chosen level.
+
 
 ## Action pinning
 

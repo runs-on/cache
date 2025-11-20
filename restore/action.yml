@@ -23,6 +23,10 @@ inputs:
     description: 'Check if a cache entry exists for the given input(s) (key, restore-keys) without downloading the cache'
     default: 'false'
     required: false
+  compression-level:
+    description: 'Gzip compression level from 0 (no compression) to 9 (max compression)'
+    default: '0'
+    required: false
 outputs:
   cache-hit:
     description: 'A boolean value to indicate an exact match was found for the primary key'

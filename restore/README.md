@@ -11,6 +11,7 @@ The restore action restores a cache. It works similarly to the `cache` action ex
 * `restore-keys` - An ordered list of prefix-matched keys to use for restoring stale cache if no cache hit occurred for key.
 * `fail-on-cache-miss` - Fail the workflow if cache entry is not found. Default: `false`
 * `lookup-only` - If true, only checks if cache entry exists and skips download. Default: `false`
+* `compression-level` - Gzip compression level from `0` (no compression) to `9` (maximum compression). Default: `0`
 
 ### Outputs
 

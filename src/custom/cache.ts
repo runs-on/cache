@@ -4,9 +4,7 @@ import * as core from "@actions/core";
 import * as path from "path";
 import * as utils from "@actions/cache/lib/internal/cacheUtils";
 import * as cacheHttpClient from "./backend";
-import {
-    CompressionMethod
-} from "@actions/cache/lib/internal/constants";
+import { CompressionMethod } from "@actions/cache/lib/internal/constants";
 import {
     createTar as defaultCreateTar,
     extractTar as defaultExtractTar,
@@ -59,44 +57,56 @@ type TarFunctions = {
     ) => Promise<void>;
 };
 
-type CompressionMode = "none" | "minimal" | "auto";
+const compressedTarFunctions: TarFunctions = {
+    createTar: defaultCreateTar,
+    extractTar: defaultExtractTar,
+    listTar: defaultListTar
+};
 
-// Force no compression regardless of RUNS_ON_CACHE_COMPRESSION to guarantee raw tar archives
-const compressionMode: CompressionMode = "none";
-const skipCompression = true;
-const forceMinimalCompression = false;
+const uncompressedTarFunctions: TarFunctions = {
+    createTar: uncompressedCreateTar,
+    extractTar: uncompressedExtractTar,
+    listTar: uncompressedListTar
+};
 
-const tarFunctions: TarFunctions = skipCompression
-    ? {
-        createTar: uncompressedCreateTar,
-        extractTar: uncompressedExtractTar,
-        listTar: uncompressedListTar
-    }
-    : {
-        createTar: defaultCreateTar,
-        extractTar: defaultExtractTar,
-        listTar: defaultListTar
-    };
+let configuredCompressionLevel = 0;
+let compressionLevelLogged = false;
 
-let compressionModeLogged = false;
+export function setCompressionLevel(level: number): void {
+    configuredCompressionLevel = Math.max(0, Math.min(9, Math.floor(level)));
+    compressionLevelLogged = false;
+}
+
+function getConfiguredCompressionLevel(): number {
+    return configuredCompressionLevel;
+}
+
+function shouldSkipCompression(): boolean {
+    return getConfiguredCompressionLevel() <= 0;
+}
+
+function getTarFunctions(): TarFunctions {
+    return shouldSkipCompression()
+        ? uncompressedTarFunctions
+        : compressedTarFunctions;
+}
 
 async function resolveCompressionMethod(): Promise<CompressionMethod> {
-    if (!compressionModeLogged) {
-        if (skipCompression) {
+    if (!compressionLevelLogged) {
+        const level = getConfiguredCompressionLevel();
+        if (level <= 0) {
             core.info(
-                "Cache compression mode: none (archives stored without compression)."
-            );
-        } else if (forceMinimalCompression) {
-            core.info(
-                "Cache compression mode: minimal (forcing gzip compression)."
+                "Cache compression level: 0 (archives stored without compression)."
             );
         } else {
-            core.debug("Cache compression mode: auto (tool defaults).");
+            core.info(
+                `Cache compression level: ${level} (gzip compression enabled).`
+            );
         }
-        compressionModeLogged = true;
+        compressionLevelLogged = true;
     }
 
-    if (forceMinimalCompression) {
+    if (!shouldSkipCompression()) {
         return CompressionMethod.Gzip;
     }
 
@@ -170,6 +180,7 @@ export async function restoreCache(
     }
 
     const compressionMethod = await resolveCompressionMethod();
+    const tarFns = getTarFunctions();
     let archivePath = "";
     try {
         // path are needed to compute version
@@ -201,7 +212,7 @@ export async function restoreCache(
         );
 
         if (core.isDebug()) {
-            await tarFunctions.listTar(archivePath, compressionMethod);
+            await tarFns.listTar(archivePath, compressionMethod);
         }
 
         const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
@@ -218,7 +229,7 @@ export async function restoreCache(
             );
         }
 
-        await tarFunctions.extractTar(archivePath, compressionMethod);
+        await tarFns.extractTar(archivePath, compressionMethod);
         core.info("Cache restored successfully");
 
         return cacheEntry.cacheKey;
@@ -266,6 +277,7 @@ export async function saveCache(
     checkKey(key);
 
     const compressionMethod = await resolveCompressionMethod();
+    const tarFns = getTarFunctions();
     let cacheId = -1;
 
     const cachePaths = await utils.resolvePaths(paths);
@@ -287,9 +299,9 @@ export async function saveCache(
     core.debug(`Archive Path: ${archivePath}`);
 
     try {
-        await tarFunctions.createTar(archiveFolder, cachePaths, compressionMethod);
+        await tarFns.createTar(archiveFolder, cachePaths, compressionMethod);
         if (core.isDebug()) {
-            await tarFunctions.listTar(archivePath, compressionMethod);
+            await tarFns.listTar(archivePath, compressionMethod);
         }
         const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
         core.debug(`File Size: ${archiveFileSize}`);

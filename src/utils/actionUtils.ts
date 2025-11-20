@@ -1,7 +1,7 @@
 import * as cache from "@actions/cache";
 import * as core from "@actions/core";
 
-import { RefKey } from "../constants";
+import { Inputs, RefKey } from "../constants";
 
 export function isGhes(): boolean {
     const ghUrl = new URL(
@@ -83,4 +83,22 @@ Otherwise please upgrade to GHES version >= 3.5 and If you are also using Github
         "An internal error has occurred in cache backend. Please check https://www.githubstatus.com/ for any ongoing issue in actions."
     );
     return false;
+}
+
+export function configureCompressionLevelInput(): number {
+    const rawValue = core.getInput(Inputs.CompressionLevel) || "0";
+    const level = Number(rawValue);
+    if (!Number.isInteger(level) || level < 0 || level > 9) {
+        throw new Error(
+            `Compression level must be an integer between 0 and 9. Received: ${rawValue}`
+        );
+    }
+
+    if (level > 0) {
+        process.env.GZIP = `-${level}`;
+    } else {
+        delete process.env.GZIP;
+    }
+
+    return level;
 }
