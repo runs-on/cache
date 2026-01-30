@@ -11,6 +11,7 @@ on:
       - main
       - releases/**
       - fix/**
+      - feature/**
       - v4*
 
 jobs:
