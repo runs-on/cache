@@ -100501,7 +100501,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.saveCache = exports.downloadCache = exports.getCacheEntry = exports.getCacheVersion = void 0;
+exports.saveCache = exports.downloadCache = exports.getCacheEntry = exports.getS3Prefix = exports.getCacheVersion = void 0;
 const client_s3_1 = __nccwpck_require__(3711);
 const { getSignedUrl } = __nccwpck_require__(8505);
 const fs_1 = __nccwpck_require__(9896);
@@ -100526,6 +100526,9 @@ const region = process.env.RUNS_ON_AWS_REGION ||
     process.env.AWS_DEFAULT_REGION;
 const forcePathStyle = process.env.RUNS_ON_S3_FORCE_PATH_STYLE === "true" ||
     process.env.AWS_S3_FORCE_PATH_STYLE === "true";
+const pathPrefix = process.env.RUNS_ON_S3_PATH_PREFIX !== undefined
+    ? process.env.RUNS_ON_S3_PATH_PREFIX
+    : `cache/${process.env.GITHUB_REPOSITORY}`;
 const uploadQueueSize = Number(process.env.UPLOAD_QUEUE_SIZE || "4");
 const uploadPartSize = Number(process.env.UPLOAD_PART_SIZE || "32") * 1024 * 1024;
 const downloadQueueSize = Number(process.env.DOWNLOAD_QUEUE_SIZE || "8");
@@ -100552,10 +100555,10 @@ function getCacheVersion(paths, compressionMethod, enableCrossOsArchive = false)
 }
 exports.getCacheVersion = getCacheVersion;
 function getS3Prefix(paths, { compressionMethod, enableCrossOsArchive }) {
-    const repository = process.env.GITHUB_REPOSITORY;
     const version = getCacheVersion(paths, compressionMethod, enableCrossOsArchive);
-    return ["cache", repository, version].join("/");
+    return [pathPrefix, version].filter(Boolean).join("/");
 }
+exports.getS3Prefix = getS3Prefix;
 function getCacheEntry(keys, paths, { compressionMethod, enableCrossOsArchive }) {
     return __awaiter(this, void 0, void 0, function* () {
         const cacheEntry = {};
@@ -100567,7 +100570,7 @@ function getCacheEntry(keys, paths, { compressionMethod, enableCrossOsArchive })
             });
             const listObjectsParams = {
                 Bucket: bucketName,
-                Prefix: [s3Prefix, restoreKey].join("/")
+                Prefix: [s3Prefix, restoreKey].filter(Boolean).join("/")
             };
             try {
                 const { Contents = [] } = yield s3Client.send(new client_s3_1.ListObjectsV2Command(listObjectsParams));
@@ -100575,7 +100578,7 @@ function getCacheEntry(keys, paths, { compressionMethod, enableCrossOsArchive })
                     // Sort keys by LastModified time in descending order
                     const sortedKeys = Contents.sort((a, b) => Number(b.LastModified) - Number(a.LastModified));
                     const s3Path = sortedKeys[0].Key; // Return the most recent key
-                    cacheEntry.cacheKey = s3Path === null || s3Path === void 0 ? void 0 : s3Path.replace(`${s3Prefix}/`, "");
+                    cacheEntry.cacheKey = s3Prefix ? s3Path === null || s3Path === void 0 ? void 0 : s3Path.replace(`${s3Prefix}/`, "") : s3Path;
                     cacheEntry.archiveLocation = `s3://${bucketName}/${s3Path}`;
                     return cacheEntry;
                 }
@@ -100649,7 +100652,7 @@ function saveCache(key, paths, archivePath, { compressionMethod, enableCrossOsAr
             compressionMethod,
             enableCrossOsArchive
         });
-        const s3Key = `${s3Prefix}/${key}`;
+        const s3Key = [s3Prefix, key].filter(Boolean).join("/");
         const multipartUpload = new lib_storage_1.Upload({
             client: s3Client,
             params: {

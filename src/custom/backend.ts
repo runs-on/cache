@@ -43,6 +43,9 @@ const region =
 const forcePathStyle =
     process.env.RUNS_ON_S3_FORCE_PATH_STYLE === "true" ||
     process.env.AWS_S3_FORCE_PATH_STYLE === "true";
+const pathPrefix = process.env.RUNS_ON_S3_PATH_PREFIX !== undefined
+    ? process.env.RUNS_ON_S3_PATH_PREFIX
+    : `cache/${process.env.GITHUB_REPOSITORY}`;
 
 const uploadQueueSize = Number(process.env.UPLOAD_QUEUE_SIZE || "4");
 const uploadPartSize =
@@ -81,18 +84,17 @@ export function getCacheVersion(
         .digest("hex");
 }
 
-function getS3Prefix(
+export function getS3Prefix(
     paths: string[],
     { compressionMethod, enableCrossOsArchive }
 ): string {
-    const repository = process.env.GITHUB_REPOSITORY;
     const version = getCacheVersion(
         paths,
         compressionMethod,
         enableCrossOsArchive
     );
 
-    return ["cache", repository, version].join("/");
+    return [pathPrefix, version].filter(Boolean).join("/");
 }
 
 export async function getCacheEntry(
@@ -110,7 +112,7 @@ export async function getCacheEntry(
         });
         const listObjectsParams = {
             Bucket: bucketName,
-            Prefix: [s3Prefix, restoreKey].join("/")
+            Prefix: [s3Prefix, restoreKey].filter(Boolean).join("/")
         };
 
         try {
@@ -123,7 +125,7 @@ export async function getCacheEntry(
                     (a, b) => Number(b.LastModified) - Number(a.LastModified)
                 );
                 const s3Path = sortedKeys[0].Key; // Return the most recent key
-                cacheEntry.cacheKey = s3Path?.replace(`${s3Prefix}/`, "");
+                cacheEntry.cacheKey = s3Prefix ? s3Path?.replace(`${s3Prefix}/`, "") : s3Path;
                 cacheEntry.archiveLocation = `s3://${bucketName}/${s3Path}`;
                 return cacheEntry;
             }
@@ -224,7 +226,7 @@ export async function saveCache(
         compressionMethod,
         enableCrossOsArchive
     });
-    const s3Key = `${s3Prefix}/${key}`;
+    const s3Key = [s3Prefix, key].filter(Boolean).join("/");
 
     const multipartUpload = new Upload({
         client: s3Client,
