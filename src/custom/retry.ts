@@ -147,7 +147,10 @@ export function isTransientError(error: Error): boolean {
     if (
         message.includes("Download validation failed") ||
         message.includes("Range request not supported") ||
-        message.includes("Content-Range header")
+        message.includes("Content-Range header") ||
+        message.includes("Segment download error") ||
+        message.includes("Segment size mismatch") ||
+        message.includes("Download integrity failed")
     ) {
         return true;
     }

@@ -227,6 +227,36 @@ describe("retry", () => {
             ).toBe(true);
         });
 
+        it("detects segment download errors", () => {
+            expect(
+                isTransientError(
+                    new Error(
+                        "Segment download error: expected HTTP 206 but got 200 for bytes=0-1023"
+                    )
+                )
+            ).toBe(true);
+        });
+
+        it("detects segment size mismatch errors", () => {
+            expect(
+                isTransientError(
+                    new Error(
+                        "Segment size mismatch: expected 1024 bytes but received 512 for bytes=0-1023"
+                    )
+                )
+            ).toBe(true);
+        });
+
+        it("detects download integrity (SHA-256) failures", () => {
+            expect(
+                isTransientError(
+                    new Error(
+                        "Download integrity failed: expected SHA-256 abc123 but computed def456"
+                    )
+                )
+            ).toBe(true);
+        });
+
         it("detects HTTP 5xx errors", () => {
             expect(isTransientError(new Error("HTTP 503"))).toBe(true);
             expect(isTransientError(new Error("Status 500"))).toBe(true);

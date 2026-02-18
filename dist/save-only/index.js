@@ -100655,14 +100655,20 @@ function saveCache(key, paths, archivePath, { compressionMethod, enableCrossOsAr
         core.info(`Cache Size: ~${Math.round(cacheSize / (1024 * 1024))} MB (${cacheSize} B)`);
         const totalParts = Math.ceil(cacheSize / uploadPartSize);
         core.info(`Uploading cache from ${archivePath} to ${bucketName}/${s3Key}`);
+        // Compute SHA-256 of archive for download integrity validation
+        core.info("Computing archive SHA-256...");
+        const archiveSha256 = yield (0, downloadUtils_1.computeFileSha256)(archivePath);
+        core.info(`Archive SHA-256: ${archiveSha256}`);
+        // CRC32 per-part checksum: opt-in because not all S3-compatible backends
+        // (e.g. older MinIO, RustFS) support ChecksumAlgorithm on multipart uploads.
+        const enableCrc32 = process.env.UPLOAD_CHECKSUM_CRC32 === "true" ||
+            process.env.RUNS_ON_S3_UPLOAD_CRC32 === "true";
         yield (0, retry_1.withRetry)(() => __awaiter(this, void 0, void 0, function* () {
             const multipartUpload = new lib_storage_1.Upload({
                 client: s3Client,
-                params: {
-                    Bucket: bucketName,
-                    Key: s3Key,
-                    Body: (0, fs_1.createReadStream)(archivePath)
-                },
+                params: Object.assign({ Bucket: bucketName, Key: s3Key, Body: (0, fs_1.createReadStream)(archivePath), Metadata: { "cache-sha256": archiveSha256 } }, (enableCrc32 && {
+                    ChecksumAlgorithm: client_s3_1.ChecksumAlgorithm.CRC32
+                })),
                 // Part size in bytes
                 partSize: uploadPartSize,
                 // Max concurrency
@@ -100976,9 +100982,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.downloadCacheHttpClientConcurrent = exports.DownloadProgress = void 0;
+exports.computeFileSha256 = exports.downloadCacheHttpClientConcurrent = exports.DownloadProgress = void 0;
 // Just a copy of the original file from the toolkit/actions/cache repository, with a change for byte range used in the downloadCacheHttpClientConcurrent function.
 const core = __importStar(__nccwpck_require__(7484));
+const crypto = __importStar(__nccwpck_require__(6982));
 const http_client_1 = __nccwpck_require__(4844);
 const fs = __importStar(__nccwpck_require__(9896));
 const requestUtils_1 = __nccwpck_require__(2846);
@@ -101116,6 +101123,8 @@ function downloadCacheHttpClientConcurrent(archiveLocation, archivePath, options
                 throw new Error("Content-Range header in server response not in correct format");
             }
             const length = parseInt(match[1]);
+            // Extract expected SHA-256 from S3 custom metadata (set during upload)
+            const expectedSha256 = res.message.headers["x-amz-meta-cache-sha256"];
             if (Number.isNaN(length)) {
                 throw new Error(`Could not interpret Content-Length: ${length}`);
             }
@@ -101161,6 +101170,16 @@ function downloadCacheHttpClientConcurrent(archiveLocation, archivePath, options
             if (bytesDownloaded !== length) {
                 throw new Error(`Download validation failed: Expected ${length} bytes but downloaded ${bytesDownloaded} bytes`);
             }
+            // End-to-end SHA-256 validation (if metadata present from upload)
+            if (expectedSha256) {
+                core.info("Verifying download integrity (SHA-256)...");
+                const fileHash = yield computeFileSha256(archivePath);
+                if (fileHash !== expectedSha256) {
+                    throw new Error(`Download integrity failed: expected SHA-256 ${expectedSha256} ` +
+                        `but computed ${fileHash}`);
+                }
+                core.info("Download integrity verified (SHA-256 match)");
+            }
             progress.stopDisplayTimer();
         }
         finally {
@@ -101198,10 +101217,21 @@ function downloadSegment(httpClient, archiveLocation, offset, count) {
                 Range: `bytes=${offset}-${offset + count - 1}`
             });
         }));
+        // Validate HTTP 206 Partial Content
+        const statusCode = partRes.message.statusCode;
+        if (statusCode !== 206) {
+            throw new Error(`Segment download error: expected HTTP 206 but got ${statusCode} ` +
+                `for bytes=${offset}-${offset + count - 1}`);
+        }
         if (!partRes.readBodyBuffer) {
             throw new Error("Expected HttpClientResponse to implement readBodyBuffer");
         }
         const buffer = yield partRes.readBodyBuffer();
+        // Validate buffer length matches requested range
+        if (buffer.length !== count) {
+            throw new Error(`Segment size mismatch: expected ${count} bytes but received ` +
+                `${buffer.length} for bytes=${offset}-${offset + count - 1}`);
+        }
         return {
             offset,
             count: buffer.length,
@@ -101209,6 +101239,18 @@ function downloadSegment(httpClient, archiveLocation, offset, count) {
         };
     });
 }
+function computeFileSha256(filePath) {
+    return __awaiter(this, void 0, void 0, function* () {
+        return new Promise((resolve, reject) => {
+            const hash = crypto.createHash("sha256");
+            const stream = fs.createReadStream(filePath);
+            stream.on("data", data => hash.update(data));
+            stream.on("end", () => resolve(hash.digest("hex")));
+            stream.on("error", reject);
+        });
+    });
+}
+exports.computeFileSha256 = computeFileSha256;
 
 
 /***/ }),
@@ -101333,6 +101375,10 @@ exports.withGlobalTimeout = withGlobalTimeout;
 function isTransientError(error) {
     const message = error.message || "";
     const name = error.name || "";
+    // Our own TimeoutError (from withTimeout) is always transient
+    if (name === "TimeoutError") {
+        return true;
+    }
     // AWS SDK transient errors
     if (name === "ThrottlingException" ||
         name === "TooManyRequestsException" ||
@@ -101359,7 +101405,10 @@ function isTransientError(error) {
     // Download validation failures (retryable)
     if (message.includes("Download validation failed") ||
         message.includes("Range request not supported") ||
-        message.includes("Content-Range header")) {
+        message.includes("Content-Range header") ||
+        message.includes("Segment download error") ||
+        message.includes("Segment size mismatch") ||
+        message.includes("Download integrity failed")) {
         return true;
     }
     return false;

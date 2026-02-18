@@ -1,4 +1,5 @@
 import {
+    ChecksumAlgorithm,
     S3Client,
     GetObjectCommand,
     ListObjectsV2Command
@@ -14,7 +15,10 @@ import { CompressionMethod } from "@actions/cache/lib/internal/constants";
 import * as core from "@actions/core";
 import * as utils from "@actions/cache/lib/internal/cacheUtils";
 import { Upload } from "@aws-sdk/lib-storage";
-import { downloadCacheHttpClientConcurrent } from "./downloadUtils";
+import {
+    downloadCacheHttpClientConcurrent,
+    computeFileSha256
+} from "./downloadUtils";
 import { getRetryConfig } from "./retryConfig";
 import { withRetry, isTransientError } from "./retry";
 
@@ -231,6 +235,17 @@ export async function saveCache(
     const totalParts = Math.ceil(cacheSize / uploadPartSize);
     core.info(`Uploading cache from ${archivePath} to ${bucketName}/${s3Key}`);
 
+    // Compute SHA-256 of archive for download integrity validation
+    core.info("Computing archive SHA-256...");
+    const archiveSha256 = await computeFileSha256(archivePath);
+    core.info(`Archive SHA-256: ${archiveSha256}`);
+
+    // CRC32 per-part checksum: opt-in because not all S3-compatible backends
+    // (e.g. older MinIO, RustFS) support ChecksumAlgorithm on multipart uploads.
+    const enableCrc32 =
+        process.env.UPLOAD_CHECKSUM_CRC32 === "true" ||
+        process.env.RUNS_ON_S3_UPLOAD_CRC32 === "true";
+
     await withRetry(
         async () => {
             const multipartUpload = new Upload({
@@ -238,7 +253,11 @@ export async function saveCache(
                 params: {
                     Bucket: bucketName,
                     Key: s3Key,
-                    Body: createReadStream(archivePath)
+                    Body: createReadStream(archivePath),
+                    Metadata: { "cache-sha256": archiveSha256 },
+                    ...(enableCrc32 && {
+                        ChecksumAlgorithm: ChecksumAlgorithm.CRC32
+                    })
                 },
                 // Part size in bytes
                 partSize: uploadPartSize,
