@@ -232,6 +232,13 @@ describe("retry", () => {
             expect(isTransientError(new Error("Status 500"))).toBe(true);
         });
 
+        it("detects TimeoutError as transient", () => {
+            const err = new TimeoutError(
+                "downloadSegment(offset=0) timed out after 30000ms"
+            );
+            expect(isTransientError(err)).toBe(true);
+        });
+
         it("returns false for non-transient errors", () => {
             expect(isTransientError(new Error("Access Denied"))).toBe(false);
             expect(isTransientError(new Error("NoSuchBucket"))).toBe(false);

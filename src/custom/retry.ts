@@ -108,6 +108,11 @@ export function isTransientError(error: Error): boolean {
     const message = error.message || "";
     const name = error.name || "";
 
+    // Our own TimeoutError (from withTimeout) is always transient
+    if (name === "TimeoutError") {
+        return true;
+    }
+
     // AWS SDK transient errors
     if (
         name === "ThrottlingException" ||
