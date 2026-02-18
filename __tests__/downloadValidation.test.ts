@@ -179,7 +179,7 @@ describe("Download Validation", () => {
             ).rejects.toThrow("Segment size mismatch: expected 1024 bytes but received 512");
         });
 
-        it("should validate SHA-256 and throw on mismatch", async () => {
+        it("should throw on SHA-256 mismatch", async () => {
             const expectedSize = 1024;
             const testContent = Buffer.alloc(expectedSize, 0x42);
             const wrongHash = "0000000000000000000000000000000000000000000000000000000000000000";

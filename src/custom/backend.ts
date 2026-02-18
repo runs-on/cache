@@ -1,5 +1,4 @@
 import {
-    ChecksumAlgorithm,
     S3Client,
     GetObjectCommand,
     ListObjectsV2Command
@@ -240,12 +239,6 @@ export async function saveCache(
     const archiveSha256 = await computeFileSha256(archivePath);
     core.info(`Archive SHA-256: ${archiveSha256}`);
 
-    // CRC32 per-part checksum: opt-in because not all S3-compatible backends
-    // (e.g. older MinIO, RustFS) support ChecksumAlgorithm on multipart uploads.
-    const enableCrc32 =
-        process.env.UPLOAD_CHECKSUM_CRC32 === "true" ||
-        process.env.RUNS_ON_S3_UPLOAD_CRC32 === "true";
-
     await withRetry(
         async () => {
             const multipartUpload = new Upload({
@@ -254,10 +247,7 @@ export async function saveCache(
                     Bucket: bucketName,
                     Key: s3Key,
                     Body: createReadStream(archivePath),
-                    Metadata: { "cache-sha256": archiveSha256 },
-                    ...(enableCrc32 && {
-                        ChecksumAlgorithm: ChecksumAlgorithm.CRC32
-                    })
+                    Metadata: { "cache-sha256": archiveSha256 }
                 },
                 // Part size in bytes
                 partSize: uploadPartSize,

@@ -247,14 +247,14 @@ describe("retry", () => {
             ).toBe(true);
         });
 
-        it("detects download integrity (SHA-256) failures", () => {
+        it("does not treat SHA-256 integrity failure as transient", () => {
             expect(
                 isTransientError(
                     new Error(
                         "Download integrity failed: expected SHA-256 abc123 but computed def456"
                     )
                 )
-            ).toBe(true);
+            ).toBe(false);
         });
 
         it("detects HTTP 5xx errors", () => {
