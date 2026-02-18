@@ -15,6 +15,18 @@ inputs:
     description: 'An optional boolean when enabled, allows windows runners to save caches that can be restored on other platforms'
     default: 'false'
     required: false
+  retry-max-attempts:
+    description: 'Max retry attempts for S3 operations (download, upload, list). 1 = no retry.'
+    default: '3'
+    required: false
+  timeout-seconds:
+    description: 'Global timeout in seconds for entire restore/save operation. 0 = disabled.'
+    default: '300'
+    required: false
+  s3-max-attempts:
+    description: 'AWS SDK S3Client internal retry count.'
+    default: '3'
+    required: false
 runs:
   using: 'node20'
   main: '../dist/save-only/index.js'
