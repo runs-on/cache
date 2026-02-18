@@ -11,6 +11,9 @@ The restore action restores a cache. It works similarly to the `cache` action ex
 * `restore-keys` - An ordered list of prefix-matched keys to use for restoring stale cache if no cache hit occurred for key.
 * `fail-on-cache-miss` - Fail the workflow if cache entry is not found. Default: `false`
 * `lookup-only` - If true, only checks if cache entry exists and skips download. Default: `false`
+* `retry-max-attempts` - Max retry attempts for S3 operations. `1` = no retry. Default: `3`
+* `timeout-seconds` - Global timeout in seconds for entire restore operation. `0` = disabled. Default: `300`
+* `s3-max-attempts` - AWS SDK S3Client internal retry count. Default: `3`
 
 ### Outputs
 
@@ -24,6 +27,8 @@ The restore action restores a cache. It works similarly to the `cache` action ex
 ### Environment Variables
 
 * `SEGMENT_DOWNLOAD_TIMEOUT_MINS` - Segment download timeout (in minutes, default `10`) to abort download of the segment if not completed in the defined number of minutes. [Read more](https://github.com/actions/cache/blob/main/tips-and-workarounds.md#cache-segment-restore-timeout)
+
+See also [Retry and timeout configuration](../README.md#retry-and-timeout-configuration) for advanced tuning via environment variables.
 
 ## Use cases
 

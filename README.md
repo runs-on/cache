@@ -39,6 +39,33 @@ If you want to use this in your own infrastructure, setup your AWS credentials w
 
 Be aware of S3 transfer costs if your runners are not in the same AWS region as your bucket.
 
+## Retry and timeout configuration
+
+All S3 operations (download, upload, cache lookup) include automatic retry with exponential backoff. You can tune this behavior with action inputs:
+
+```yaml
+- uses: runs-on/cache@v4
+  with:
+    path: node_modules
+    key: deps-${{ hashFiles('package-lock.json') }}
+    retry-max-attempts: 3    # Max retry attempts for S3 operations. 1 = no retry. Default: 3
+    timeout-seconds: 300     # Global timeout for entire restore/save operation. 0 = disabled. Default: 300
+    s3-max-attempts: 3       # AWS SDK S3Client internal retry count. Default: 3
+```
+
+For more advanced tuning, environment variables are available. An env var always takes priority over the corresponding action input.
+
+| Env Var | Default | Description |
+|---|---|---|
+| `RETRY_MAX_ATTEMPTS` | `3` | Override for `retry-max-attempts` |
+| `RETRY_BACKOFF_BASE_MS` | `1000` | Base delay in ms for exponential backoff |
+| `RETRY_BACKOFF_MULTIPLIER` | `2` | Backoff multiplier per attempt |
+| `RETRY_BACKOFF_MAX_MS` | `30000` | Maximum backoff delay cap in ms |
+| `SEGMENT_RETRIES` | `5` | Per-segment download retry count |
+| `SEGMENT_TIMEOUT_MS` | `30000` | Per-segment download timeout in ms |
+| `GLOBAL_TIMEOUT_SECONDS` | `300` | Override for `timeout-seconds` |
+| `S3_MAX_ATTEMPTS` | `3` | Override for `s3-max-attempts` |
+
 ## Special environment variables
 
 * `RUNS_ON_S3_BUCKET_CACHE`: if set, the action will use this bucket to store the cache.
