@@ -5,6 +5,8 @@ import { TransferProgressEvent } from "@azure/ms-rest-js";
 import * as fs from "fs";
 import { DownloadOptions } from "@actions/cache/lib/options";
 import { retryHttpClientResponse } from "@actions/cache/lib/internal/requestUtils";
+import { getRetryConfig } from "./retryConfig";
+import { withTimeout } from "./retry";
 
 export interface RunsOnDownloadOptions extends DownloadOptions {
     partSize: number;
@@ -269,19 +271,18 @@ async function downloadSegmentRetry(
     offset: number,
     count: number
 ): Promise<DownloadSegment> {
-    const retries = 5;
+    const config = getRetryConfig();
+    const retries = config.segmentRetries;
+    const timeout = config.segmentTimeoutMs;
     let failures = 0;
 
     while (true) {
         try {
-            const timeout = 30000;
-            const result = await promiseWithTimeout(
+            const result = await withTimeout(
+                downloadSegment(httpClient, archiveLocation, offset, count),
                 timeout,
-                downloadSegment(httpClient, archiveLocation, offset, count)
+                `downloadSegment(offset=${offset})`
             );
-            if (typeof result === "string") {
-                throw new Error("downloadSegmentRetry failed due to timeout");
-            }
 
             return result;
         } catch (err) {
@@ -328,17 +329,3 @@ declare class DownloadSegment {
     buffer: Buffer;
 }
 
-const promiseWithTimeout = async <T>(
-    timeoutMs: number,
-    promise: Promise<T>
-): Promise<T | string> => {
-    let timeoutHandle: NodeJS.Timeout;
-    const timeoutPromise = new Promise<string>(resolve => {
-        timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
-    });
-
-    return Promise.race([promise, timeoutPromise]).then(result => {
-        clearTimeout(timeoutHandle);
-        return result;
-    });
-};

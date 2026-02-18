@@ -100439,7 +100439,10 @@ var Inputs;
     Inputs["UploadChunkSize"] = "upload-chunk-size";
     Inputs["EnableCrossOsArchive"] = "enableCrossOsArchive";
     Inputs["FailOnCacheMiss"] = "fail-on-cache-miss";
-    Inputs["LookupOnly"] = "lookup-only"; // Input for cache, restore action
+    Inputs["LookupOnly"] = "lookup-only";
+    Inputs["RetryMaxAttempts"] = "retry-max-attempts";
+    Inputs["TimeoutSeconds"] = "timeout-seconds";
+    Inputs["S3MaxAttempts"] = "s3-max-attempts"; // Input for cache, restore, save action
 })(Inputs = exports.Inputs || (exports.Inputs = {}));
 var Outputs;
 (function (Outputs) {
@@ -100510,6 +100513,8 @@ const core = __importStar(__nccwpck_require__(7484));
 const utils = __importStar(__nccwpck_require__(8299));
 const lib_storage_1 = __nccwpck_require__(2358);
 const downloadUtils_1 = __nccwpck_require__(118);
+const retryConfig_1 = __nccwpck_require__(8519);
+const retry_1 = __nccwpck_require__(4481);
 // if executing from RunsOn, unset any existing AWS credential env variables so that we can use the IAM instance profile for credentials
 // see unsetCredentials() in https://github.com/aws-actions/configure-aws-credentials/blob/v4.0.2/src/helpers.ts#L44
 // Note: we preserve AWS_REGION and AWS_DEFAULT_REGION as they are needed for SDK initialization
@@ -100530,7 +100535,19 @@ const uploadQueueSize = Number(process.env.UPLOAD_QUEUE_SIZE || "4");
 const uploadPartSize = Number(process.env.UPLOAD_PART_SIZE || "32") * 1024 * 1024;
 const downloadQueueSize = Number(process.env.DOWNLOAD_QUEUE_SIZE || "8");
 const downloadPartSize = Number(process.env.DOWNLOAD_PART_SIZE || "16") * 1024 * 1024;
-const s3Client = new client_s3_1.S3Client({ region, forcePathStyle, endpoint });
+let s3ClientInstance;
+function getS3Client() {
+    if (!s3ClientInstance) {
+        const config = (0, retryConfig_1.getRetryConfig)();
+        s3ClientInstance = new client_s3_1.S3Client({
+            region,
+            forcePathStyle,
+            endpoint,
+            maxAttempts: config.s3MaxAttempts
+        });
+    }
+    return s3ClientInstance;
+}
 function getCacheVersion(paths, compressionMethod, enableCrossOsArchive = false) {
     // don't pass changes upstream
     const components = paths.slice();
@@ -100559,6 +100576,7 @@ function getS3Prefix(paths, { compressionMethod, enableCrossOsArchive }) {
 function getCacheEntry(keys, paths, { compressionMethod, enableCrossOsArchive }) {
     return __awaiter(this, void 0, void 0, function* () {
         const cacheEntry = {};
+        const s3Client = getS3Client();
         // Find the most recent key matching one of the restoreKeys prefixes
         for (const restoreKey of keys) {
             const s3Prefix = getS3Prefix(paths, {
@@ -100570,7 +100588,10 @@ function getCacheEntry(keys, paths, { compressionMethod, enableCrossOsArchive })
                 Prefix: [s3Prefix, restoreKey].join("/")
             };
             try {
-                const { Contents = [] } = yield s3Client.send(new client_s3_1.ListObjectsV2Command(listObjectsParams));
+                const { Contents = [] } = yield (0, retry_1.withRetry)(() => s3Client.send(new client_s3_1.ListObjectsV2Command(listObjectsParams)), {
+                    isRetryable: retry_1.isTransientError,
+                    label: `ListObjectsV2(${restoreKey})`
+                });
                 if (Contents.length > 0) {
                     // Sort keys by LastModified time in descending order
                     const sortedKeys = Contents.sort((a, b) => Number(b.LastModified) - Number(a.LastModified));
@@ -100596,44 +100617,22 @@ function downloadCache(archiveLocation, archivePath, options) {
         if (!region) {
             throw new Error("Environment variable RUNS_ON_AWS_REGION not set");
         }
+        const s3Client = getS3Client();
         const archiveUrl = new URL(archiveLocation);
         const objectKey = archiveUrl.pathname.slice(1);
-        // Retry logic for download validation failures
-        const maxRetries = 3;
-        let lastError;
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            try {
-                const command = new client_s3_1.GetObjectCommand({
-                    Bucket: bucketName,
-                    Key: objectKey
-                });
-                const url = yield getSignedUrl(s3Client, command, {
-                    expiresIn: 3600
-                });
-                yield (0, downloadUtils_1.downloadCacheHttpClientConcurrent)(url, archivePath, Object.assign(Object.assign({}, options), { downloadConcurrency: downloadQueueSize, concurrentBlobDownloads: true, partSize: downloadPartSize }));
-                // If we get here, download succeeded
-                return;
-            }
-            catch (error) {
-                const errorMessage = error.message;
-                lastError = error;
-                // Only retry on validation failures, not on other errors
-                if (errorMessage.includes("Download validation failed") ||
-                    errorMessage.includes("Range request not supported") ||
-                    errorMessage.includes("Content-Range header")) {
-                    if (attempt < maxRetries) {
-                        const delayMs = Math.pow(2, attempt - 1) * 1000; // exponential backoff
-                        core.warning(`Download attempt ${attempt} failed: ${errorMessage}. Retrying in ${delayMs}ms...`);
-                        yield new Promise(resolve => setTimeout(resolve, delayMs));
-                        continue;
-                    }
-                }
-                // For non-retryable errors or max retries reached, throw the error
-                throw error;
-            }
-        }
-        // This should never be reached, but just in case
-        throw lastError || new Error("Download failed after all retry attempts");
+        yield (0, retry_1.withRetry)(() => __awaiter(this, void 0, void 0, function* () {
+            const command = new client_s3_1.GetObjectCommand({
+                Bucket: bucketName,
+                Key: objectKey
+            });
+            const url = yield getSignedUrl(s3Client, command, {
+                expiresIn: 3600
+            });
+            yield (0, downloadUtils_1.downloadCacheHttpClientConcurrent)(url, archivePath, Object.assign(Object.assign({}, options), { downloadConcurrency: downloadQueueSize, concurrentBlobDownloads: true, partSize: downloadPartSize }));
+        }), {
+            isRetryable: retry_1.isTransientError,
+            label: "downloadCache"
+        });
     });
 }
 exports.downloadCache = downloadCache;
@@ -100645,32 +100644,38 @@ function saveCache(key, paths, archivePath, { compressionMethod, enableCrossOsAr
         if (!region) {
             throw new Error("Environment variable RUNS_ON_AWS_REGION not set");
         }
+        const s3Client = getS3Client();
         const s3Prefix = getS3Prefix(paths, {
             compressionMethod,
             enableCrossOsArchive
         });
         const s3Key = `${s3Prefix}/${key}`;
-        const multipartUpload = new lib_storage_1.Upload({
-            client: s3Client,
-            params: {
-                Bucket: bucketName,
-                Key: s3Key,
-                Body: (0, fs_1.createReadStream)(archivePath)
-            },
-            // Part size in bytes
-            partSize: uploadPartSize,
-            // Max concurrency
-            queueSize: uploadQueueSize
-        });
         // Commit Cache
         const cacheSize = utils.getArchiveFileSizeInBytes(archivePath);
         core.info(`Cache Size: ~${Math.round(cacheSize / (1024 * 1024))} MB (${cacheSize} B)`);
         const totalParts = Math.ceil(cacheSize / uploadPartSize);
         core.info(`Uploading cache from ${archivePath} to ${bucketName}/${s3Key}`);
-        multipartUpload.on("httpUploadProgress", progress => {
-            core.info(`Uploaded part ${progress.part}/${totalParts}.`);
+        yield (0, retry_1.withRetry)(() => __awaiter(this, void 0, void 0, function* () {
+            const multipartUpload = new lib_storage_1.Upload({
+                client: s3Client,
+                params: {
+                    Bucket: bucketName,
+                    Key: s3Key,
+                    Body: (0, fs_1.createReadStream)(archivePath)
+                },
+                // Part size in bytes
+                partSize: uploadPartSize,
+                // Max concurrency
+                queueSize: uploadQueueSize
+            });
+            multipartUpload.on("httpUploadProgress", progress => {
+                core.info(`Uploaded part ${progress.part}/${totalParts}.`);
+            });
+            yield multipartUpload.done();
+        }), {
+            isRetryable: retry_1.isTransientError,
+            label: "saveCache"
         });
-        yield multipartUpload.done();
         core.info(`Cache saved successfully.`);
     });
 }
@@ -100724,6 +100729,7 @@ const path = __importStar(__nccwpck_require__(6928));
 const utils = __importStar(__nccwpck_require__(8299));
 const cacheHttpClient = __importStar(__nccwpck_require__(5951));
 const tar_1 = __nccwpck_require__(5321);
+const retry_1 = __nccwpck_require__(4481);
 class ValidationError extends Error {
     constructor(message) {
         super(message);
@@ -100797,40 +100803,45 @@ function restoreCache(paths, primaryKey, restoreKeys, options, enableCrossOsArch
         const compressionMethod = yield utils.getCompressionMethod();
         let archivePath = "";
         try {
-            // path are needed to compute version
-            const cacheEntry = yield cacheHttpClient.getCacheEntry(keys, paths, {
-                compressionMethod,
-                enableCrossOsArchive
-            });
-            if (!(cacheEntry === null || cacheEntry === void 0 ? void 0 : cacheEntry.archiveLocation)) {
-                // Cache not found
-                return undefined;
-            }
-            if (options === null || options === void 0 ? void 0 : options.lookupOnly) {
-                core.info("Lookup only - skipping download");
+            return yield (0, retry_1.withGlobalTimeout)(() => __awaiter(this, void 0, void 0, function* () {
+                // path are needed to compute version
+                const cacheEntry = yield cacheHttpClient.getCacheEntry(keys, paths, {
+                    compressionMethod,
+                    enableCrossOsArchive
+                });
+                if (!(cacheEntry === null || cacheEntry === void 0 ? void 0 : cacheEntry.archiveLocation)) {
+                    // Cache not found
+                    return undefined;
+                }
+                if (options === null || options === void 0 ? void 0 : options.lookupOnly) {
+                    core.info("Lookup only - skipping download");
+                    return cacheEntry.cacheKey;
+                }
+                archivePath = path.join(yield utils.createTempDirectory(), utils.getCacheFileName(compressionMethod));
+                core.debug(`Archive Path: ${archivePath}`);
+                // Download the cache from the cache entry
+                yield cacheHttpClient.downloadCache(cacheEntry.archiveLocation, archivePath, options);
+                if (core.isDebug()) {
+                    yield (0, tar_1.listTar)(archivePath, compressionMethod);
+                }
+                const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
+                core.info(`Cache Size: ~${Math.round(archiveFileSize / (1024 * 1024))} MB (${archiveFileSize} B)`);
+                // Validate downloaded archive
+                if (archiveFileSize === 0) {
+                    throw new DownloadValidationError("Downloaded cache archive is empty (0 bytes). This may indicate a failed download or corrupted cache.");
+                }
+                yield (0, tar_1.extractTar)(archivePath, compressionMethod);
+                core.info("Cache restored successfully");
                 return cacheEntry.cacheKey;
-            }
-            archivePath = path.join(yield utils.createTempDirectory(), utils.getCacheFileName(compressionMethod));
-            core.debug(`Archive Path: ${archivePath}`);
-            // Download the cache from the cache entry
-            yield cacheHttpClient.downloadCache(cacheEntry.archiveLocation, archivePath, options);
-            if (core.isDebug()) {
-                yield (0, tar_1.listTar)(archivePath, compressionMethod);
-            }
-            const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
-            core.info(`Cache Size: ~${Math.round(archiveFileSize / (1024 * 1024))} MB (${archiveFileSize} B)`);
-            // Validate downloaded archive
-            if (archiveFileSize === 0) {
-                throw new DownloadValidationError("Downloaded cache archive is empty (0 bytes). This may indicate a failed download or corrupted cache.");
-            }
-            yield (0, tar_1.extractTar)(archivePath, compressionMethod);
-            core.info("Cache restored successfully");
-            return cacheEntry.cacheKey;
+            }), "restoreCache");
         }
         catch (error) {
             const typedError = error;
             if (typedError.name === ValidationError.name) {
                 throw error;
+            }
+            else if (typedError.name === retry_1.TimeoutError.name) {
+                core.warning(`Cache restore timed out: ${typedError.message}`);
             }
             else if (typedError.name === DownloadValidationError.name) {
                 // Log download validation errors as warnings but don't fail the workflow
@@ -100879,24 +100890,29 @@ function saveCache(paths, key, options, enableCrossOsArchive = false) {
         const archivePath = path.join(archiveFolder, utils.getCacheFileName(compressionMethod));
         core.debug(`Archive Path: ${archivePath}`);
         try {
-            yield (0, tar_1.createTar)(archiveFolder, cachePaths, compressionMethod);
-            if (core.isDebug()) {
-                yield (0, tar_1.listTar)(archivePath, compressionMethod);
-            }
-            const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
-            core.debug(`File Size: ${archiveFileSize}`);
-            yield cacheHttpClient.saveCache(key, paths, archivePath, {
-                compressionMethod,
-                enableCrossOsArchive,
-                cacheSize: archiveFileSize
-            });
-            // dummy cacheId, if we get there without raising, it means the cache has been saved
-            cacheId = 1;
+            yield (0, retry_1.withGlobalTimeout)(() => __awaiter(this, void 0, void 0, function* () {
+                yield (0, tar_1.createTar)(archiveFolder, cachePaths, compressionMethod);
+                if (core.isDebug()) {
+                    yield (0, tar_1.listTar)(archivePath, compressionMethod);
+                }
+                const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
+                core.debug(`File Size: ${archiveFileSize}`);
+                yield cacheHttpClient.saveCache(key, paths, archivePath, {
+                    compressionMethod,
+                    enableCrossOsArchive,
+                    cacheSize: archiveFileSize
+                });
+                // dummy cacheId, if we get there without raising, it means the cache has been saved
+                cacheId = 1;
+            }), "saveCache");
         }
         catch (error) {
             const typedError = error;
             if (typedError.name === ValidationError.name) {
                 throw error;
+            }
+            else if (typedError.name === retry_1.TimeoutError.name) {
+                core.warning(`Cache save timed out: ${typedError.message}`);
             }
             else if (typedError.name === ReserveCacheError.name) {
                 core.info(`Failed to save: ${typedError.message}`);
@@ -100966,6 +100982,8 @@ const core = __importStar(__nccwpck_require__(7484));
 const http_client_1 = __nccwpck_require__(4844);
 const fs = __importStar(__nccwpck_require__(9896));
 const requestUtils_1 = __nccwpck_require__(2846);
+const retryConfig_1 = __nccwpck_require__(8519);
+const retry_1 = __nccwpck_require__(4481);
 /**
  * Class for tracking the download state and displaying stats.
  */
@@ -101155,15 +101173,13 @@ function downloadCacheHttpClientConcurrent(archiveLocation, archivePath, options
 exports.downloadCacheHttpClientConcurrent = downloadCacheHttpClientConcurrent;
 function downloadSegmentRetry(httpClient, archiveLocation, offset, count) {
     return __awaiter(this, void 0, void 0, function* () {
-        const retries = 5;
+        const config = (0, retryConfig_1.getRetryConfig)();
+        const retries = config.segmentRetries;
+        const timeout = config.segmentTimeoutMs;
         let failures = 0;
         while (true) {
             try {
-                const timeout = 30000;
-                const result = yield promiseWithTimeout(timeout, downloadSegment(httpClient, archiveLocation, offset, count));
-                if (typeof result === "string") {
-                    throw new Error("downloadSegmentRetry failed due to timeout");
-                }
+                const result = yield (0, retry_1.withTimeout)(downloadSegment(httpClient, archiveLocation, offset, count), timeout, `downloadSegment(offset=${offset})`);
                 return result;
             }
             catch (err) {
@@ -101193,16 +101209,238 @@ function downloadSegment(httpClient, archiveLocation, offset, count) {
         };
     });
 }
-const promiseWithTimeout = (timeoutMs, promise) => __awaiter(void 0, void 0, void 0, function* () {
-    let timeoutHandle;
-    const timeoutPromise = new Promise(resolve => {
-        timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
-    });
-    return Promise.race([promise, timeoutPromise]).then(result => {
-        clearTimeout(timeoutHandle);
-        return result;
-    });
+
+
+/***/ }),
+
+/***/ 4481:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
 });
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.isTransientError = exports.withGlobalTimeout = exports.withTimeout = exports.withRetry = exports.TimeoutError = void 0;
+const core = __importStar(__nccwpck_require__(7484));
+const retryConfig_1 = __nccwpck_require__(8519);
+class TimeoutError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = "TimeoutError";
+        Object.setPrototypeOf(this, TimeoutError.prototype);
+    }
+}
+exports.TimeoutError = TimeoutError;
+/**
+ * Generic retry with configurable exponential backoff.
+ */
+function withRetry(fn, options = {}) {
+    var _a, _b, _c;
+    return __awaiter(this, void 0, void 0, function* () {
+        const config = (0, retryConfig_1.getRetryConfig)();
+        const maxAttempts = (_a = options.maxAttempts) !== null && _a !== void 0 ? _a : config.maxAttempts;
+        const isRetryable = (_b = options.isRetryable) !== null && _b !== void 0 ? _b : (() => true);
+        const label = (_c = options.label) !== null && _c !== void 0 ? _c : "operation";
+        let lastError;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                return yield fn();
+            }
+            catch (error) {
+                lastError = error;
+                if (attempt >= maxAttempts || !isRetryable(lastError)) {
+                    throw lastError;
+                }
+                const delayMs = Math.min(config.backoffBaseMs *
+                    Math.pow(config.backoffMultiplier, attempt - 1), config.backoffMaxMs);
+                core.warning(`${label} attempt ${attempt}/${maxAttempts} failed: ${lastError.message}. Retrying in ${delayMs}ms...`);
+                yield new Promise(resolve => setTimeout(resolve, delayMs));
+            }
+        }
+        throw lastError || new Error(`${label} failed after all retry attempts`);
+    });
+}
+exports.withRetry = withRetry;
+/**
+ * Wraps a promise with a timeout. Rejects with TimeoutError if not resolved in time.
+ */
+function withTimeout(promise, timeoutMs, label = "operation") {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (timeoutMs <= 0)
+            return promise;
+        let timeoutHandle;
+        const timeoutPromise = new Promise((_, reject) => {
+            timeoutHandle = setTimeout(() => reject(new TimeoutError(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+        });
+        try {
+            return yield Promise.race([promise, timeoutPromise]);
+        }
+        finally {
+            clearTimeout(timeoutHandle);
+        }
+    });
+}
+exports.withTimeout = withTimeout;
+/**
+ * Wraps an entire operation (restore/save) with the global timeout from config.
+ * Disabled when globalTimeoutSeconds is 0.
+ */
+function withGlobalTimeout(fn, label = "operation") {
+    return __awaiter(this, void 0, void 0, function* () {
+        const config = (0, retryConfig_1.getRetryConfig)();
+        const timeoutSeconds = config.globalTimeoutSeconds;
+        if (timeoutSeconds <= 0) {
+            return fn();
+        }
+        return withTimeout(fn(), timeoutSeconds * 1000, label);
+    });
+}
+exports.withGlobalTimeout = withGlobalTimeout;
+/**
+ * Detects transient AWS/network errors worth retrying.
+ */
+function isTransientError(error) {
+    const message = error.message || "";
+    const name = error.name || "";
+    // AWS SDK transient errors
+    if (name === "ThrottlingException" ||
+        name === "TooManyRequestsException" ||
+        name === "ServiceUnavailable" ||
+        name === "InternalError" ||
+        name === "RequestTimeout" ||
+        name === "SlowDown") {
+        return true;
+    }
+    // Network-level errors
+    if (message.includes("ECONNRESET") ||
+        message.includes("ETIMEDOUT") ||
+        message.includes("ECONNREFUSED") ||
+        message.includes("EPIPE") ||
+        message.includes("socket hang up") ||
+        message.includes("network") ||
+        message.includes("NetworkingError")) {
+        return true;
+    }
+    // HTTP 5xx from message
+    if (/5\d{2}/.test(message)) {
+        return true;
+    }
+    // Download validation failures (retryable)
+    if (message.includes("Download validation failed") ||
+        message.includes("Range request not supported") ||
+        message.includes("Content-Range header")) {
+        return true;
+    }
+    return false;
+}
+exports.isTransientError = isTransientError;
+
+
+/***/ }),
+
+/***/ 8519:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.resetRetryConfig = exports.getRetryConfig = void 0;
+const core = __importStar(__nccwpck_require__(7484));
+const constants_1 = __nccwpck_require__(7242);
+let cached;
+function readInt(envVar, inputName, defaultValue) {
+    const envVal = process.env[envVar];
+    if (envVal !== undefined && envVal !== "") {
+        const parsed = parseInt(envVal, 10);
+        if (!isNaN(parsed) && parsed >= 0)
+            return parsed;
+    }
+    if (inputName) {
+        const inputVal = core.getInput(inputName);
+        if (inputVal !== "") {
+            const parsed = parseInt(inputVal, 10);
+            if (!isNaN(parsed) && parsed >= 0)
+                return parsed;
+        }
+    }
+    return defaultValue;
+}
+function getRetryConfig() {
+    if (cached)
+        return cached;
+    const config = {
+        maxAttempts: readInt("RETRY_MAX_ATTEMPTS", constants_1.Inputs.RetryMaxAttempts, 3),
+        backoffBaseMs: readInt("RETRY_BACKOFF_BASE_MS", undefined, 1000),
+        backoffMultiplier: readInt("RETRY_BACKOFF_MULTIPLIER", undefined, 2),
+        backoffMaxMs: readInt("RETRY_BACKOFF_MAX_MS", undefined, 30000),
+        segmentRetries: readInt("SEGMENT_RETRIES", undefined, 5),
+        segmentTimeoutMs: readInt("SEGMENT_TIMEOUT_MS", undefined, 30000),
+        globalTimeoutSeconds: readInt("GLOBAL_TIMEOUT_SECONDS", constants_1.Inputs.TimeoutSeconds, 300),
+        s3MaxAttempts: readInt("S3_MAX_ATTEMPTS", constants_1.Inputs.S3MaxAttempts, 3)
+    };
+    cached = Object.freeze(config);
+    return cached;
+}
+exports.getRetryConfig = getRetryConfig;
+/** Reset memoized config (for testing) */
+function resetRetryConfig() {
+    cached = undefined;
+}
+exports.resetRetryConfig = resetRetryConfig;
 
 
 /***/ }),

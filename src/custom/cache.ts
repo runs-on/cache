@@ -10,6 +10,7 @@ import {
     listTar
 } from "@actions/cache/lib/internal/tar";
 import { DownloadOptions, UploadOptions } from "@actions/cache/lib/options";
+import { withGlobalTimeout, TimeoutError } from "./retry";
 
 export class ValidationError extends Error {
     constructor(message: string) {
@@ -104,60 +105,66 @@ export async function restoreCache(
     const compressionMethod = await utils.getCompressionMethod();
     let archivePath = "";
     try {
-        // path are needed to compute version
-        const cacheEntry = await cacheHttpClient.getCacheEntry(keys, paths, {
-            compressionMethod,
-            enableCrossOsArchive
-        });
-        if (!cacheEntry?.archiveLocation) {
-            // Cache not found
-            return undefined;
-        }
+        return await withGlobalTimeout(async () => {
+            // path are needed to compute version
+            const cacheEntry = await cacheHttpClient.getCacheEntry(keys, paths, {
+                compressionMethod,
+                enableCrossOsArchive
+            });
+            if (!cacheEntry?.archiveLocation) {
+                // Cache not found
+                return undefined;
+            }
 
-        if (options?.lookupOnly) {
-            core.info("Lookup only - skipping download");
-            return cacheEntry.cacheKey;
-        }
+            if (options?.lookupOnly) {
+                core.info("Lookup only - skipping download");
+                return cacheEntry.cacheKey;
+            }
 
-        archivePath = path.join(
-            await utils.createTempDirectory(),
-            utils.getCacheFileName(compressionMethod)
-        );
-        core.debug(`Archive Path: ${archivePath}`);
-
-        // Download the cache from the cache entry
-        await cacheHttpClient.downloadCache(
-            cacheEntry.archiveLocation,
-            archivePath,
-            options
-        );
-
-        if (core.isDebug()) {
-            await listTar(archivePath, compressionMethod);
-        }
-
-        const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
-        core.info(
-            `Cache Size: ~${Math.round(
-                archiveFileSize / (1024 * 1024)
-            )} MB (${archiveFileSize} B)`
-        );
-
-        // Validate downloaded archive
-        if (archiveFileSize === 0) {
-            throw new DownloadValidationError(
-                "Downloaded cache archive is empty (0 bytes). This may indicate a failed download or corrupted cache."
+            archivePath = path.join(
+                await utils.createTempDirectory(),
+                utils.getCacheFileName(compressionMethod)
             );
-        }
+            core.debug(`Archive Path: ${archivePath}`);
 
-        await extractTar(archivePath, compressionMethod);
-        core.info("Cache restored successfully");
+            // Download the cache from the cache entry
+            await cacheHttpClient.downloadCache(
+                cacheEntry.archiveLocation,
+                archivePath,
+                options
+            );
 
-        return cacheEntry.cacheKey;
+            if (core.isDebug()) {
+                await listTar(archivePath, compressionMethod);
+            }
+
+            const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
+            core.info(
+                `Cache Size: ~${Math.round(
+                    archiveFileSize / (1024 * 1024)
+                )} MB (${archiveFileSize} B)`
+            );
+
+            // Validate downloaded archive
+            if (archiveFileSize === 0) {
+                throw new DownloadValidationError(
+                    "Downloaded cache archive is empty (0 bytes). This may indicate a failed download or corrupted cache."
+                );
+            }
+
+            await extractTar(archivePath, compressionMethod);
+            core.info("Cache restored successfully");
+
+            return cacheEntry.cacheKey;
+        }, "restoreCache");
     } catch (error) {
         const typedError = error as Error;
         if (typedError.name === ValidationError.name) {
             throw error;
+        } else if (typedError.name === TimeoutError.name) {
+            core.warning(
+                `Cache restore timed out: ${typedError.message}`
+            );
         } else if (typedError.name === DownloadValidationError.name) {
             // Log download validation errors as warnings but don't fail the workflow
             core.warning(
@@ -219,25 +226,29 @@ export async function saveCache(
     core.debug(`Archive Path: ${archivePath}`);
 
     try {
-        await createTar(archiveFolder, cachePaths, compressionMethod);
-        if (core.isDebug()) {
-            await listTar(archivePath, compressionMethod);
-        }
-        const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
-        core.debug(`File Size: ${archiveFileSize}`);
+        await withGlobalTimeout(async () => {
+            await createTar(archiveFolder, cachePaths, compressionMethod);
+            if (core.isDebug()) {
+                await listTar(archivePath, compressionMethod);
+            }
+            const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
+            core.debug(`File Size: ${archiveFileSize}`);
 
-        await cacheHttpClient.saveCache(key, paths, archivePath, {
-            compressionMethod,
-            enableCrossOsArchive,
-            cacheSize: archiveFileSize
-        });
+            await cacheHttpClient.saveCache(key, paths, archivePath, {
+                compressionMethod,
+                enableCrossOsArchive,
+                cacheSize: archiveFileSize
+            });
 
-        // dummy cacheId, if we get there without raising, it means the cache has been saved
-        cacheId = 1;
+            // dummy cacheId, if we get there without raising, it means the cache has been saved
+            cacheId = 1;
+        }, "saveCache");
     } catch (error) {
         const typedError = error as Error;
         if (typedError.name === ValidationError.name) {
             throw error;
+        } else if (typedError.name === TimeoutError.name) {
+            core.warning(`Cache save timed out: ${typedError.message}`);
         } else if (typedError.name === ReserveCacheError.name) {
             core.info(`Failed to save: ${typedError.message}`);
         } else {
