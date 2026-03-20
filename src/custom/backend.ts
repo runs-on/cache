@@ -14,7 +14,12 @@ import { CompressionMethod } from "@actions/cache/lib/internal/constants";
 import * as core from "@actions/core";
 import * as utils from "@actions/cache/lib/internal/cacheUtils";
 import { Upload } from "@aws-sdk/lib-storage";
-import { downloadCacheHttpClientConcurrent } from "./downloadUtils";
+import {
+    downloadCacheHttpClientConcurrent,
+    computeFileSha256
+} from "./downloadUtils";
+import { getRetryConfig } from "./retryConfig";
+import { withRetry, isTransientError } from "./retry";
 
 export interface ArtifactCacheEntry {
     cacheKey?: string;
@@ -51,7 +56,20 @@ const downloadQueueSize = Number(process.env.DOWNLOAD_QUEUE_SIZE || "8");
 const downloadPartSize =
     Number(process.env.DOWNLOAD_PART_SIZE || "16") * 1024 * 1024;
 
-const s3Client = new S3Client({ region, forcePathStyle, endpoint });
+let s3ClientInstance: S3Client | undefined;
+
+function getS3Client(): S3Client {
+    if (!s3ClientInstance) {
+        const config = getRetryConfig();
+        s3ClientInstance = new S3Client({
+            region,
+            forcePathStyle,
+            endpoint,
+            maxAttempts: config.s3MaxAttempts
+        });
+    }
+    return s3ClientInstance;
+}
 
 export function getCacheVersion(
     paths: string[],
@@ -101,6 +119,7 @@ export async function getCacheEntry(
     { compressionMethod, enableCrossOsArchive }
 ) {
     const cacheEntry: ArtifactCacheEntry = {};
+    const s3Client = getS3Client();
 
     // Find the most recent key matching one of the restoreKeys prefixes
     for (const restoreKey of keys) {
@@ -114,8 +133,12 @@ export async function getCacheEntry(
         };
 
         try {
-            const { Contents = [] } = await s3Client.send(
-                new ListObjectsV2Command(listObjectsParams)
+            const { Contents = [] } = await withRetry(
+                () => s3Client.send(new ListObjectsV2Command(listObjectsParams)),
+                {
+                    isRetryable: isTransientError,
+                    label: `ListObjectsV2(${restoreKey})`
+                }
             );
             if (Contents.length > 0) {
                 // Sort keys by LastModified time in descending order
@@ -151,15 +174,12 @@ export async function downloadCache(
         throw new Error("Environment variable RUNS_ON_AWS_REGION not set");
     }
 
+    const s3Client = getS3Client();
     const archiveUrl = new URL(archiveLocation);
     const objectKey = archiveUrl.pathname.slice(1);
 
-    // Retry logic for download validation failures
-    const maxRetries = 3;
-    let lastError: Error | undefined;
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
+    await withRetry(
+        async () => {
             const command = new GetObjectCommand({
                 Bucket: bucketName,
                 Key: objectKey
@@ -174,36 +194,12 @@ export async function downloadCache(
                 concurrentBlobDownloads: true,
                 partSize: downloadPartSize
             });
-
-            // If we get here, download succeeded
-            return;
-        } catch (error) {
-            const errorMessage = (error as Error).message;
-            lastError = error as Error;
-
-            // Only retry on validation failures, not on other errors
-            if (
-                errorMessage.includes("Download validation failed") ||
-                errorMessage.includes("Range request not supported") ||
-                errorMessage.includes("Content-Range header")
-            ) {
-                if (attempt < maxRetries) {
-                    const delayMs = Math.pow(2, attempt - 1) * 1000; // exponential backoff
-                    core.warning(
-                        `Download attempt ${attempt} failed: ${errorMessage}. Retrying in ${delayMs}ms...`
-                    );
-                    await new Promise(resolve => setTimeout(resolve, delayMs));
-                    continue;
-                }
-            }
-
-            // For non-retryable errors or max retries reached, throw the error
-            throw error;
+        },
+        {
+            isRetryable: isTransientError,
+            label: "downloadCache"
         }
-    }
-
-    // This should never be reached, but just in case
-    throw lastError || new Error("Download failed after all retry attempts");
+    );
 }
 
 export async function saveCache(
@@ -220,24 +216,12 @@ export async function saveCache(
         throw new Error("Environment variable RUNS_ON_AWS_REGION not set");
     }
 
+    const s3Client = getS3Client();
     const s3Prefix = getS3Prefix(paths, {
         compressionMethod,
         enableCrossOsArchive
     });
     const s3Key = `${s3Prefix}/${key}`;
-
-    const multipartUpload = new Upload({
-        client: s3Client,
-        params: {
-            Bucket: bucketName,
-            Key: s3Key,
-            Body: createReadStream(archivePath)
-        },
-        // Part size in bytes
-        partSize: uploadPartSize,
-        // Max concurrency
-        queueSize: uploadQueueSize
-    });
 
     // Commit Cache
     const cacheSize = utils.getArchiveFileSizeInBytes(archivePath);
@@ -249,10 +233,39 @@ export async function saveCache(
 
     const totalParts = Math.ceil(cacheSize / uploadPartSize);
     core.info(`Uploading cache from ${archivePath} to ${bucketName}/${s3Key}`);
-    multipartUpload.on("httpUploadProgress", progress => {
-        core.info(`Uploaded part ${progress.part}/${totalParts}.`);
-    });
 
-    await multipartUpload.done();
+    // Compute SHA-256 of archive for download integrity validation
+    core.info("Computing archive SHA-256...");
+    const archiveSha256 = await computeFileSha256(archivePath);
+    core.info(`Archive SHA-256: ${archiveSha256}`);
+
+    await withRetry(
+        async () => {
+            const multipartUpload = new Upload({
+                client: s3Client,
+                params: {
+                    Bucket: bucketName,
+                    Key: s3Key,
+                    Body: createReadStream(archivePath),
+                    Metadata: { "cache-sha256": archiveSha256 }
+                },
+                // Part size in bytes
+                partSize: uploadPartSize,
+                // Max concurrency
+                queueSize: uploadQueueSize
+            });
+
+            multipartUpload.on("httpUploadProgress", progress => {
+                core.info(`Uploaded part ${progress.part}/${totalParts}.`);
+            });
+
+            await multipartUpload.done();
+        },
+        {
+            isRetryable: isTransientError,
+            label: "saveCache"
+        }
+    );
+
     core.info(`Cache saved successfully.`);
 }

@@ -34,6 +34,18 @@ inputs:
       save-always does not work as intended and will be removed in a future release.
       A separate `actions/cache/restore` step should be used instead.
       See https://github.com/actions/cache/tree/main/save#always-save-cache for more details.
+  retry-max-attempts:
+    description: 'Max retry attempts for S3 operations (download, upload, list). 1 = no retry.'
+    default: '3'
+    required: false
+  timeout-seconds:
+    description: 'Global timeout in seconds for entire restore/save operation. 0 = disabled.'
+    default: '300'
+    required: false
+  s3-max-attempts:
+    description: 'AWS SDK S3Client internal retry count.'
+    default: '3'
+    required: false
 outputs:
   cache-hit:
     description: 'A boolean value to indicate an exact match was found for the primary key'

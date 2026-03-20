@@ -1,10 +1,13 @@
 // Just a copy of the original file from the toolkit/actions/cache repository, with a change for byte range used in the downloadCacheHttpClientConcurrent function.
 import * as core from "@actions/core";
+import * as crypto from "crypto";
 import { HttpClient } from "@actions/http-client";
 import { TransferProgressEvent } from "@azure/ms-rest-js";
 import * as fs from "fs";
 import { DownloadOptions } from "@actions/cache/lib/options";
 import { retryHttpClientResponse } from "@actions/cache/lib/internal/requestUtils";
+import { getRetryConfig } from "./retryConfig";
+import { withTimeout } from "./retry";
 
 export interface RunsOnDownloadOptions extends DownloadOptions {
     partSize: number;
@@ -181,6 +184,10 @@ export async function downloadCacheHttpClientConcurrent(
             );
         }
         const length = parseInt(match[1]);
+
+        // Extract expected SHA-256 from S3 custom metadata (set during upload)
+        const expectedSha256 =
+            res.message.headers["x-amz-meta-cache-sha256"];
         if (Number.isNaN(length)) {
             throw new Error(`Could not interpret Content-Length: ${length}`);
         }
@@ -255,6 +262,19 @@ export async function downloadCacheHttpClientConcurrent(
             );
         }
 
+        // End-to-end SHA-256 validation (if metadata present from upload)
+        if (expectedSha256) {
+            core.info("Verifying download integrity (SHA-256)...");
+            const fileHash = await computeFileSha256(archivePath);
+            if (fileHash !== expectedSha256) {
+                throw new Error(
+                    `Download integrity failed: expected SHA-256 ${expectedSha256} ` +
+                        `but computed ${fileHash}`
+                );
+            }
+            core.info("Download integrity verified (SHA-256 match)");
+        }
+
         progress.stopDisplayTimer();
     } finally {
         progress?.stopDisplayTimer();
@@ -269,19 +289,18 @@ async function downloadSegmentRetry(
     offset: number,
     count: number
 ): Promise<DownloadSegment> {
-    const retries = 5;
+    const config = getRetryConfig();
+    const retries = config.segmentRetries;
+    const timeout = config.segmentTimeoutMs;
     let failures = 0;
 
     while (true) {
         try {
-            const timeout = 30000;
-            const result = await promiseWithTimeout(
+            const result = await withTimeout(
+                downloadSegment(httpClient, archiveLocation, offset, count),
                 timeout,
-                downloadSegment(httpClient, archiveLocation, offset, count)
+                `downloadSegment(offset=${offset})`
             );
-            if (typeof result === "string") {
-                throw new Error("downloadSegmentRetry failed due to timeout");
-            }
 
             return result;
         } catch (err) {
@@ -308,6 +327,15 @@ async function downloadSegment(
             })
     );
 
+    // Validate HTTP 206 Partial Content
+    const statusCode = partRes.message.statusCode;
+    if (statusCode !== 206) {
+        throw new Error(
+            `Segment download error: expected HTTP 206 but got ${statusCode} ` +
+                `for bytes=${offset}-${offset + count - 1}`
+        );
+    }
+
     if (!partRes.readBodyBuffer) {
         throw new Error(
             "Expected HttpClientResponse to implement readBodyBuffer"
@@ -315,11 +343,32 @@ async function downloadSegment(
     }
 
     const buffer = await partRes.readBodyBuffer();
+
+    // Validate buffer length matches requested range
+    if (buffer.length !== count) {
+        throw new Error(
+            `Segment size mismatch: expected ${count} bytes but received ` +
+                `${buffer.length} for bytes=${offset}-${offset + count - 1}`
+        );
+    }
+
     return {
         offset,
-        count: buffer.length, // Use actual buffer length instead of requested count
+        count: buffer.length,
         buffer
     };
+}
+
+export async function computeFileSha256(
+    filePath: string | fs.PathLike
+): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const hash = crypto.createHash("sha256");
+        const stream = fs.createReadStream(filePath);
+        stream.on("data", data => hash.update(data));
+        stream.on("end", () => resolve(hash.digest("hex")));
+        stream.on("error", reject);
+    });
 }
 
 declare class DownloadSegment {
@@ -328,17 +377,3 @@ declare class DownloadSegment {
     buffer: Buffer;
 }
 
-const promiseWithTimeout = async <T>(
-    timeoutMs: number,
-    promise: Promise<T>
-): Promise<T | string> => {
-    let timeoutHandle: NodeJS.Timeout;
-    const timeoutPromise = new Promise<string>(resolve => {
-        timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
-    });
-
-    return Promise.race([promise, timeoutPromise]).then(result => {
-        clearTimeout(timeoutHandle);
-        return result;
-    });
-};

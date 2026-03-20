@@ -9,6 +9,9 @@ The save action saves a cache. It works similarly to the `cache` action except t
 * `key` - An explicit key for a cache entry. See [creating a cache key](../README.md#creating-a-cache-key).
 * `path` - A list of files, directories, and wildcard patterns to cache. See [`@actions/glob`](https://github.com/actions/toolkit/tree/main/packages/glob) for supported patterns.
 * `upload-chunk-size` - The chunk size used to split up large files during upload, in bytes
+* `retry-max-attempts` - Max retry attempts for S3 operations. `1` = no retry. Default: `3`
+* `timeout-seconds` - Global timeout in seconds for entire save operation. `0` = disabled. Default: `300`
+* `s3-max-attempts` - AWS SDK S3Client internal retry count. Default: `3`
 
 ### Outputs
 
