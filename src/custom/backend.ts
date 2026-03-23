@@ -43,6 +43,7 @@ const region =
 const forcePathStyle =
     process.env.RUNS_ON_S3_FORCE_PATH_STYLE === "true" ||
     process.env.AWS_S3_FORCE_PATH_STYLE === "true";
+const disableCachePrefix = process.env.RUNS_ON_S3_DISABLE_PREFIX === "true";
 
 const uploadQueueSize = Number(process.env.UPLOAD_QUEUE_SIZE || "4");
 const uploadPartSize =
@@ -84,7 +85,11 @@ export function getCacheVersion(
 function getS3Prefix(
     paths: string[],
     { compressionMethod, enableCrossOsArchive }
-): string {
+): string | undefined {
+    if (disableCachePrefix) {
+        return undefined;
+    }
+
     const repository = process.env.GITHUB_REPOSITORY;
     const version = getCacheVersion(
         paths,
@@ -110,7 +115,7 @@ export async function getCacheEntry(
         });
         const listObjectsParams = {
             Bucket: bucketName,
-            Prefix: [s3Prefix, restoreKey].join("/")
+            Prefix: s3Prefix ? [s3Prefix, restoreKey].join("/") : restoreKey
         };
 
         try {
@@ -224,7 +229,7 @@ export async function saveCache(
         compressionMethod,
         enableCrossOsArchive
     });
-    const s3Key = `${s3Prefix}/${key}`;
+    const s3Key = s3Prefix ? `${s3Prefix}/${key}` : key;
 
     const multipartUpload = new Upload({
         client: s3Client,
