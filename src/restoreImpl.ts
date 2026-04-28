@@ -2,6 +2,7 @@ import * as cache from "@actions/cache";
 import * as core from "@actions/core";
 
 import { Events, Inputs, Outputs, State } from "./constants";
+import * as custom from "./custom/cache";
 import {
     IStateProvider,
     NullStateProvider,
@@ -9,12 +10,14 @@ import {
 } from "./stateProvider";
 import * as utils from "./utils/actionUtils";
 
+const canSaveToS3 = process.env["RUNS_ON_S3_BUCKET_CACHE"] !== undefined;
+
 export async function restoreImpl(
     stateProvider: IStateProvider,
     earlyExit?: boolean | undefined
 ): Promise<string | undefined> {
     try {
-        if (!utils.isCacheFeatureAvailable()) {
+        if (!canSaveToS3 && !utils.isCacheFeatureAvailable()) {
             core.setOutput(Outputs.CacheHit, "false");
             return;
         }
@@ -42,13 +45,27 @@ export async function restoreImpl(
         const failOnCacheMiss = utils.getInputAsBool(Inputs.FailOnCacheMiss);
         const lookupOnly = utils.getInputAsBool(Inputs.LookupOnly);
 
-        const cacheKey = await cache.restoreCache(
-            cachePaths,
-            primaryKey,
-            restoreKeys,
-            { lookupOnly: lookupOnly },
-            enableCrossOsArchive
-        );
+        let cacheKey: string | undefined;
+
+        if (canSaveToS3) {
+            core.info(
+                "The cache action detected a local S3 bucket cache. Using it."
+            );
+            cacheKey = await custom.restoreCache(
+                cachePaths,
+                primaryKey,
+                restoreKeys,
+                { lookupOnly: lookupOnly }
+            );
+        } else {
+            cacheKey = await cache.restoreCache(
+                cachePaths,
+                primaryKey,
+                restoreKeys,
+                { lookupOnly: lookupOnly },
+                enableCrossOsArchive
+            );
+        }
 
         if (!cacheKey) {
             // `cache-hit` is intentionally not set to `false` here to preserve existing behavior
