@@ -1,0 +1,211 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create, for example v5.0.6
+        required: true
+        type: string
+      target_branch:
+        description: Branch to build and release from
+        required: false
+        default: v5
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, tag, and publish
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag }}
+      TARGET_BRANCH: ${{ inputs.target_branch || 'v5' }}
+      DIST_ARCHIVE: runs-on-cache-${{ inputs.tag }}.tar.gz
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$TAG" =~ ^v[0-9]+(\.[0-9]+){1,2}([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tag must look like vX.Y, vX.Y.Z, or a prerelease variant."
+            exit 1
+          fi
+
+          if [[ "$TARGET_BRANCH" =~ [[:space:]] ]]; then
+            echo "::error::target_branch must not contain whitespace."
+            exit 1
+          fi
+
+          if [[ "$TARGET_BRANCH" == refs/* || "$TARGET_BRANCH" == -* || "$TARGET_BRANCH" == /* ]]; then
+            echo "::error::target_branch must be a branch name, not a full ref or option-like value."
+            exit 1
+          fi
+
+          if ! git check-ref-format --branch "$TARGET_BRANCH" >/dev/null 2>&1; then
+            echo "::error::target_branch is not a valid branch name."
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags "https://github.com/${GITHUB_REPOSITORY}.git" "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag ${TAG} already exists."
+            exit 1
+          fi
+
+      - name: Create release app token
+        id: release-app-token
+        uses: actions/create-github-app-token@v3.1.1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Checkout target branch
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
+          fetch-depth: 0
+          token: ${{ steps.release-app-token.outputs.token }}
+
+      - name: Configure git identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Test
+        run: npm test
+
+      - name: Build distributed artifacts
+        run: npm run build
+
+      - name: Commit distributed artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git add dist
+
+          if git diff --cached --quiet; then
+            echo "Distributed artifacts are already up to date; tagging current HEAD."
+          else
+            git commit -m "dist: rebuild action bundles for ${TAG}"
+            git push origin "HEAD:${TARGET_BRANCH}"
+          fi
+
+      - name: Create and push release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag ${TAG} already exists."
+            exit 1
+          fi
+
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "refs/tags/${TAG}"
+
+      - name: Package release artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf "${DIST_ARCHIVE}" \
+            action.yml \
+            restore/action.yml \
+            save/action.yml \
+            dist
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            shasum -a 256 "${DIST_ARCHIVE}"
+            find dist -type f -name '*.js' -print | sort | xargs shasum -a 256
+          } > SHA256SUMS
+
+      - name: Sign checksums
+        shell: bash
+        env:
+          RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          RELEASE_GPG_KEY_ID: ${{ secrets.RELEASE_GPG_KEY_ID }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${RELEASE_GPG_PRIVATE_KEY}" ]]; then
+            echo "::error::RELEASE_GPG_PRIVATE_KEY secret is required."
+            exit 1
+          fi
+
+          if [[ -z "${RELEASE_GPG_PASSPHRASE}" ]]; then
+            echo "::error::RELEASE_GPG_PASSPHRASE secret is required."
+            exit 1
+          fi
+
+          export GNUPGHOME="${RUNNER_TEMP}/gnupg"
+          mkdir -p "${GNUPGHOME}"
+          chmod 700 "${GNUPGHOME}"
+
+          printf '%s' "${RELEASE_GPG_PRIVATE_KEY}" | gpg --batch --import
+
+          gpg_args=()
+          if [[ -n "${RELEASE_GPG_KEY_ID:-}" ]]; then
+            gpg_args+=(--local-user "${RELEASE_GPG_KEY_ID}")
+          fi
+
+          gpg --batch --yes --pinentry-mode loopback \
+            --passphrase "${RELEASE_GPG_PASSPHRASE}" \
+            "${gpg_args[@]}" \
+            --armor --detach-sign \
+            --output SHA256SUMS.asc SHA256SUMS
+
+      - name: Create draft GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --draft \
+            --generate-notes \
+            "${DIST_ARCHIVE}" \
+            SHA256SUMS \
+            SHA256SUMS.asc
+
+      - name: Attest release artifacts
+        uses: actions/attest@v4.1.0
+        with:
+          subject-checksums: SHA256SUMS
+
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          gh release edit "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft=false
