@@ -1,20 +1,17 @@
-import {
-    S3Client,
-    GetObjectCommand,
-    ListObjectsV2Command
-} from "@aws-sdk/client-s3";
-const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
-import { createReadStream } from "fs";
-import * as crypto from "crypto";
-import {
-    DownloadOptions,
-    getDownloadOptions
-} from "@actions/cache/lib/options";
-import { CompressionMethod } from "@actions/cache/lib/internal/constants";
-import * as core from "@actions/core";
 import * as utils from "@actions/cache/lib/internal/cacheUtils";
+import { DownloadOptions } from "@actions/cache/lib/options";
+import * as core from "@actions/core";
+import {
+    GetObjectCommand,
+    ListObjectsV2Command,
+    S3Client
+} from "@aws-sdk/client-s3";
 import { Upload } from "@aws-sdk/lib-storage";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { createReadStream } from "fs";
+
 import { downloadCacheHttpClientConcurrent } from "./downloadUtils";
+import { getS3Prefix } from "./prefix";
 
 export interface ArtifactCacheEntry {
     cacheKey?: string;
@@ -33,7 +30,6 @@ if (process.env.RUNS_ON_RUNNER_NAME && process.env.RUNS_ON_RUNNER_NAME !== "") {
     delete process.env.AWS_SESSION_TOKEN;
 }
 
-const versionSalt = "1.0";
 const bucketName = process.env.RUNS_ON_S3_BUCKET_CACHE;
 const endpoint = process.env.RUNS_ON_S3_BUCKET_ENDPOINT;
 const region =
@@ -52,48 +48,6 @@ const downloadPartSize =
     Number(process.env.DOWNLOAD_PART_SIZE || "16") * 1024 * 1024;
 
 const s3Client = new S3Client({ region, forcePathStyle, endpoint });
-
-export function getCacheVersion(
-    paths: string[],
-    compressionMethod?: CompressionMethod,
-    enableCrossOsArchive = false
-): string {
-    // don't pass changes upstream
-    const components = paths.slice();
-
-    // Add compression method to cache version to restore
-    // compressed cache as per compression method
-    if (compressionMethod) {
-        components.push(compressionMethod);
-    }
-
-    // Only check for windows platforms if enableCrossOsArchive is false
-    if (process.platform === "win32" && !enableCrossOsArchive) {
-        components.push("windows-only");
-    }
-
-    // Add salt to cache version to support breaking changes in cache entry
-    components.push(versionSalt);
-
-    return crypto
-        .createHash("sha256")
-        .update(components.join("|"))
-        .digest("hex");
-}
-
-function getS3Prefix(
-    paths: string[],
-    { compressionMethod, enableCrossOsArchive }
-): string {
-    const repository = process.env.GITHUB_REPOSITORY;
-    const version = getCacheVersion(
-        paths,
-        compressionMethod,
-        enableCrossOsArchive
-    );
-
-    return ["cache", repository, version].join("/");
-}
 
 export async function getCacheEntry(
     keys,
@@ -210,8 +164,10 @@ export async function saveCache(
     key: string,
     paths: string[],
     archivePath: string,
-    { compressionMethod, enableCrossOsArchive, cacheSize: archiveFileSize }
+    options
 ): Promise<void> {
+    const { compressionMethod, enableCrossOsArchive } = options;
+
     if (!bucketName) {
         throw new Error("Environment variable RUNS_ON_S3_BUCKET_CACHE not set");
     }

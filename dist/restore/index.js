@@ -73306,18 +73306,17 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getCacheVersion = getCacheVersion;
 exports.getCacheEntry = getCacheEntry;
 exports.downloadCache = downloadCache;
 exports.saveCache = saveCache;
-const client_s3_1 = __nccwpck_require__(53711);
-const { getSignedUrl } = __nccwpck_require__(18505);
-const fs_1 = __nccwpck_require__(79896);
-const crypto = __importStar(__nccwpck_require__(76982));
-const core = __importStar(__nccwpck_require__(37484));
 const utils = __importStar(__nccwpck_require__(98299));
+const core = __importStar(__nccwpck_require__(37484));
+const client_s3_1 = __nccwpck_require__(53711);
 const lib_storage_1 = __nccwpck_require__(22358);
+const s3_request_presigner_1 = __nccwpck_require__(18505);
+const fs_1 = __nccwpck_require__(79896);
 const downloadUtils_1 = __nccwpck_require__(118);
+const prefix_1 = __nccwpck_require__(33327);
 // if executing from RunsOn, unset any existing AWS credential env variables so that we can use the IAM instance profile for credentials
 // see unsetCredentials() in https://github.com/aws-actions/configure-aws-credentials/blob/v4.0.2/src/helpers.ts#L44
 // Note: we preserve AWS_REGION and AWS_DEFAULT_REGION as they are needed for SDK initialization
@@ -73326,7 +73325,6 @@ if (process.env.RUNS_ON_RUNNER_NAME && process.env.RUNS_ON_RUNNER_NAME !== "") {
     delete process.env.AWS_SECRET_ACCESS_KEY;
     delete process.env.AWS_SESSION_TOKEN;
 }
-const versionSalt = "1.0";
 const bucketName = process.env.RUNS_ON_S3_BUCKET_CACHE;
 const endpoint = process.env.RUNS_ON_S3_BUCKET_ENDPOINT;
 const region = process.env.RUNS_ON_AWS_REGION ||
@@ -73339,36 +73337,12 @@ const uploadPartSize = Number(process.env.UPLOAD_PART_SIZE || "32") * 1024 * 102
 const downloadQueueSize = Number(process.env.DOWNLOAD_QUEUE_SIZE || "8");
 const downloadPartSize = Number(process.env.DOWNLOAD_PART_SIZE || "16") * 1024 * 1024;
 const s3Client = new client_s3_1.S3Client({ region, forcePathStyle, endpoint });
-function getCacheVersion(paths, compressionMethod, enableCrossOsArchive = false) {
-    // don't pass changes upstream
-    const components = paths.slice();
-    // Add compression method to cache version to restore
-    // compressed cache as per compression method
-    if (compressionMethod) {
-        components.push(compressionMethod);
-    }
-    // Only check for windows platforms if enableCrossOsArchive is false
-    if (process.platform === "win32" && !enableCrossOsArchive) {
-        components.push("windows-only");
-    }
-    // Add salt to cache version to support breaking changes in cache entry
-    components.push(versionSalt);
-    return crypto
-        .createHash("sha256")
-        .update(components.join("|"))
-        .digest("hex");
-}
-function getS3Prefix(paths, { compressionMethod, enableCrossOsArchive }) {
-    const repository = process.env.GITHUB_REPOSITORY;
-    const version = getCacheVersion(paths, compressionMethod, enableCrossOsArchive);
-    return ["cache", repository, version].join("/");
-}
 function getCacheEntry(keys_1, paths_1, _a) {
     return __awaiter(this, arguments, void 0, function* (keys, paths, { compressionMethod, enableCrossOsArchive }) {
         const cacheEntry = {};
         // Find the most recent key matching one of the restoreKeys prefixes
         for (const restoreKey of keys) {
-            const s3Prefix = getS3Prefix(paths, {
+            const s3Prefix = (0, prefix_1.getS3Prefix)(paths, {
                 compressionMethod,
                 enableCrossOsArchive
             });
@@ -73413,7 +73387,7 @@ function downloadCache(archiveLocation, archivePath, options) {
                     Bucket: bucketName,
                     Key: objectKey
                 });
-                const url = yield getSignedUrl(s3Client, command, {
+                const url = yield (0, s3_request_presigner_1.getSignedUrl)(s3Client, command, {
                     expiresIn: 3600
                 });
                 yield (0, downloadUtils_1.downloadCacheHttpClientConcurrent)(url, archivePath, Object.assign(Object.assign({}, options), { downloadConcurrency: downloadQueueSize, concurrentBlobDownloads: true, partSize: downloadPartSize }));
@@ -73442,15 +73416,16 @@ function downloadCache(archiveLocation, archivePath, options) {
         throw lastError || new Error("Download failed after all retry attempts");
     });
 }
-function saveCache(key_1, paths_1, archivePath_1, _a) {
-    return __awaiter(this, arguments, void 0, function* (key, paths, archivePath, { compressionMethod, enableCrossOsArchive, cacheSize: archiveFileSize }) {
+function saveCache(key, paths, archivePath, options) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const { compressionMethod, enableCrossOsArchive } = options;
         if (!bucketName) {
             throw new Error("Environment variable RUNS_ON_S3_BUCKET_CACHE not set");
         }
         if (!region) {
             throw new Error("Environment variable RUNS_ON_AWS_REGION not set");
         }
-        const s3Prefix = getS3Prefix(paths, {
+        const s3Prefix = (0, prefix_1.getS3Prefix)(paths, {
             compressionMethod,
             enableCrossOsArchive
         });
@@ -74027,6 +74002,84 @@ const promiseWithTimeout = (timeoutMs, promise) => __awaiter(void 0, void 0, voi
         return result;
     });
 });
+
+
+/***/ }),
+
+/***/ 33327:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getCacheVersion = getCacheVersion;
+exports.getS3Prefix = getS3Prefix;
+const crypto = __importStar(__nccwpck_require__(76982));
+const versionSalt = "1.0";
+function getCacheVersion(paths, compressionMethod, enableCrossOsArchive = false) {
+    // don't pass changes upstream
+    const components = paths.slice();
+    // Add compression method to cache version to restore
+    // compressed cache as per compression method
+    if (compressionMethod) {
+        components.push(compressionMethod);
+    }
+    // Only check for windows platforms if enableCrossOsArchive is false
+    if (process.platform === "win32" && !enableCrossOsArchive) {
+        components.push("windows-only");
+    }
+    // Add salt to cache version to support breaking changes in cache entry
+    components.push(versionSalt);
+    return crypto
+        .createHash("sha256")
+        .update(components.join("|"))
+        .digest("hex");
+}
+function getS3Prefix(paths, { compressionMethod, enableCrossOsArchive }) {
+    const repository = process.env.GITHUB_REPOSITORY;
+    const sharedPrefix = process.env.RUNS_ON_S3_CACHE_SHARED_PREFIX;
+    const version = getCacheVersion(paths, compressionMethod, enableCrossOsArchive);
+    if (sharedPrefix && sharedPrefix.trim() !== "") {
+        return [normalizeS3Prefix(sharedPrefix), version].join("/");
+    }
+    return ["cache", repository, version].join("/");
+}
+function normalizeS3Prefix(prefix) {
+    return prefix.trim().replace(/^\/+|\/+$/g, "");
+}
 
 
 /***/ }),
