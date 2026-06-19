@@ -74070,10 +74070,10 @@ function getCacheVersion(paths, compressionMethod, enableCrossOsArchive = false)
 }
 function getS3Prefix(paths, { compressionMethod, enableCrossOsArchive }) {
     const repository = process.env.GITHUB_REPOSITORY;
-    const sharedPrefix = process.env.RUNS_ON_S3_CACHE_SHARED_PREFIX;
+    const repoPrefix = process.env.RUNS_ON_S3_CACHE_REPO_PREFIX;
     const version = getCacheVersion(paths, compressionMethod, enableCrossOsArchive);
-    if (sharedPrefix && sharedPrefix.trim() !== "") {
-        return [normalizeS3Prefix(sharedPrefix), version].join("/");
+    if (repoPrefix && repoPrefix.trim() !== "") {
+        return [normalizeS3Prefix(repoPrefix), version].join("/");
     }
     return ["cache", repository, version].join("/");
 }

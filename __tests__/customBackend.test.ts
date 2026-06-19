@@ -2,13 +2,12 @@ import { getCacheVersion, getS3Prefix } from "../src/custom/prefix";
 
 afterEach(() => {
     delete process.env.GITHUB_REPOSITORY;
-    delete process.env.RUNS_ON_S3_CACHE_SHARED_PREFIX;
+    delete process.env.RUNS_ON_S3_CACHE_REPO_PREFIX;
 });
 
-test("S3 prefix uses RunsOn shared cache prefix when available", () => {
+test("S3 prefix uses RunsOn repo cache prefix when available", () => {
     process.env.GITHUB_REPOSITORY = "runs-on/monorepo";
-    process.env.RUNS_ON_S3_CACHE_SHARED_PREFIX =
-        "/cache/shared/runs-on/monorepo/";
+    process.env.RUNS_ON_S3_CACHE_REPO_PREFIX = "/cache/repo/runs-on/monorepo/";
 
     const paths = ["node_modules"];
     const version = getCacheVersion(paths);
@@ -18,10 +17,10 @@ test("S3 prefix uses RunsOn shared cache prefix when available", () => {
             compressionMethod: undefined,
             enableCrossOsArchive: false
         })
-    ).toBe(`cache/shared/runs-on/monorepo/${version}`);
+    ).toBe(`cache/repo/runs-on/monorepo/${version}`);
 });
 
-test("S3 prefix keeps legacy repository layout without RunsOn shared prefix", () => {
+test("S3 prefix keeps legacy repository layout without RunsOn repo prefix", () => {
     process.env.GITHUB_REPOSITORY = "runs-on/monorepo";
 
     const paths = ["node_modules"];
