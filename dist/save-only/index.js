@@ -73306,7 +73306,10 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.s3Client = void 0;
 exports.getCacheEntry = getCacheEntry;
+exports.findCacheObject = findCacheObject;
+exports.selectCacheObject = selectCacheObject;
 exports.downloadCache = downloadCache;
 exports.saveCache = saveCache;
 const utils = __importStar(__nccwpck_require__(98299));
@@ -73317,14 +73320,7 @@ const s3_request_presigner_1 = __nccwpck_require__(18505);
 const fs_1 = __nccwpck_require__(79896);
 const downloadUtils_1 = __nccwpck_require__(118);
 const prefix_1 = __nccwpck_require__(33327);
-// if executing from RunsOn, unset any existing AWS credential env variables so that we can use the IAM instance profile for credentials
-// see unsetCredentials() in https://github.com/aws-actions/configure-aws-credentials/blob/v4.0.2/src/helpers.ts#L44
-// Note: we preserve AWS_REGION and AWS_DEFAULT_REGION as they are needed for SDK initialization
-if (process.env.RUNS_ON_RUNNER_NAME && process.env.RUNS_ON_RUNNER_NAME !== "") {
-    delete process.env.AWS_ACCESS_KEY_ID;
-    delete process.env.AWS_SECRET_ACCESS_KEY;
-    delete process.env.AWS_SESSION_TOKEN;
-}
+const maxListPages = 10;
 const bucketName = process.env.RUNS_ON_S3_BUCKET_CACHE;
 const endpoint = process.env.RUNS_ON_S3_BUCKET_ENDPOINT;
 const region = process.env.RUNS_ON_AWS_REGION ||
@@ -73336,37 +73332,70 @@ const uploadQueueSize = Number(process.env.UPLOAD_QUEUE_SIZE || "4");
 const uploadPartSize = Number(process.env.UPLOAD_PART_SIZE || "32") * 1024 * 1024;
 const downloadQueueSize = Number(process.env.DOWNLOAD_QUEUE_SIZE || "8");
 const downloadPartSize = Number(process.env.DOWNLOAD_PART_SIZE || "16") * 1024 * 1024;
-const s3Client = new client_s3_1.S3Client({ region, forcePathStyle, endpoint });
+exports.s3Client = new client_s3_1.S3Client({ region, forcePathStyle, endpoint });
 function getCacheEntry(keys_1, paths_1, _a) {
     return __awaiter(this, arguments, void 0, function* (keys, paths, { compressionMethod, enableCrossOsArchive }) {
-        const cacheEntry = {};
-        // Find the most recent key matching one of the restoreKeys prefixes
-        for (const restoreKey of keys) {
-            const s3Prefix = (0, prefix_1.getS3Prefix)(paths, {
-                compressionMethod,
-                enableCrossOsArchive
-            });
-            const listObjectsParams = {
-                Bucket: bucketName,
-                Prefix: [s3Prefix, restoreKey].join("/")
-            };
-            try {
-                const { Contents = [] } = yield s3Client.send(new client_s3_1.ListObjectsV2Command(listObjectsParams));
-                if (Contents.length > 0) {
-                    // Sort keys by LastModified time in descending order
-                    const sortedKeys = Contents.sort((a, b) => Number(b.LastModified) - Number(a.LastModified));
-                    const s3Path = sortedKeys[0].Key; // Return the most recent key
-                    cacheEntry.cacheKey = s3Path === null || s3Path === void 0 ? void 0 : s3Path.replace(`${s3Prefix}/`, "");
-                    cacheEntry.archiveLocation = `s3://${bucketName}/${s3Path}`;
-                    return cacheEntry;
+        const readPrefixes = (0, prefix_1.getReadS3Prefixes)(paths, {
+            compressionMethod,
+            enableCrossOsArchive
+        });
+        for (const s3Prefix of readPrefixes) {
+            for (const restoreKey of keys) {
+                try {
+                    const object = yield findCacheObject(s3Prefix, restoreKey);
+                    if (!(object === null || object === void 0 ? void 0 : object.Key)) {
+                        continue;
+                    }
+                    return {
+                        cacheKey: object.Key.replace(`${s3Prefix}/`, ""),
+                        archiveLocation: `s3://${bucketName}/${object.Key}`
+                    };
+                }
+                catch (error) {
+                    core.warning(`Failed to search an S3 cache scope: ${error.message}`);
                 }
             }
-            catch (error) {
-                console.error(`Error listing objects with prefix ${restoreKey} in bucket ${bucketName}:`, error);
+        }
+        return {};
+    });
+}
+function findCacheObject(s3Prefix, restoreKey) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const prefix = `${s3Prefix}/${restoreKey}`;
+        const objects = [];
+        let continuationToken;
+        for (let page = 0; page < maxListPages; page++) {
+            const response = yield exports.s3Client.send(new client_s3_1.ListObjectsV2Command({
+                Bucket: bucketName,
+                Prefix: prefix,
+                ContinuationToken: continuationToken
+            }));
+            objects.push(...(response.Contents || []));
+            if (!response.IsTruncated || !response.NextContinuationToken) {
+                break;
+            }
+            continuationToken = response.NextContinuationToken;
+            if (page === maxListPages - 1) {
+                core.warning(`S3 cache search reached the ${maxListPages}-page limit for a key prefix; selecting the best result scanned.`);
             }
         }
-        return cacheEntry; // No keys found
+        return selectCacheObject(objects, `${s3Prefix}/${restoreKey}`);
     });
+}
+function selectCacheObject(objects, exactKey) {
+    const exact = objects.find(object => object.Key === exactKey);
+    if (exact) {
+        return exact;
+    }
+    return objects.reduce((newest, object) => {
+        var _a, _b;
+        if (!newest ||
+            (((_a = object.LastModified) === null || _a === void 0 ? void 0 : _a.getTime()) || 0) >
+                (((_b = newest.LastModified) === null || _b === void 0 ? void 0 : _b.getTime()) || 0)) {
+            return object;
+        }
+        return newest;
+    }, undefined);
 }
 function downloadCache(archiveLocation, archivePath, options) {
     return __awaiter(this, void 0, void 0, function* () {
@@ -73387,7 +73416,7 @@ function downloadCache(archiveLocation, archivePath, options) {
                     Bucket: bucketName,
                     Key: objectKey
                 });
-                const url = yield (0, s3_request_presigner_1.getSignedUrl)(s3Client, command, {
+                const url = yield (0, s3_request_presigner_1.getSignedUrl)(exports.s3Client, command, {
                     expiresIn: 3600
                 });
                 yield (0, downloadUtils_1.downloadCacheHttpClientConcurrent)(url, archivePath, Object.assign(Object.assign({}, options), { downloadConcurrency: downloadQueueSize, concurrentBlobDownloads: true, partSize: downloadPartSize }));
@@ -73425,13 +73454,17 @@ function saveCache(key, paths, archivePath, options) {
         if (!region) {
             throw new Error("Environment variable RUNS_ON_AWS_REGION not set");
         }
-        const s3Prefix = (0, prefix_1.getS3Prefix)(paths, {
+        const s3Prefix = (0, prefix_1.getWriteS3Prefix)(paths, {
             compressionMethod,
             enableCrossOsArchive
         });
+        if (!s3Prefix) {
+            core.info("Cache save skipped because this workflow has no writable S3 cache scope.");
+            return false;
+        }
         const s3Key = `${s3Prefix}/${key}`;
         const multipartUpload = new lib_storage_1.Upload({
-            client: s3Client,
+            client: exports.s3Client,
             params: {
                 Bucket: bucketName,
                 Key: s3Key,
@@ -73452,6 +73485,7 @@ function saveCache(key, paths, archivePath, options) {
         });
         yield multipartUpload.done();
         core.info(`Cache saved successfully.`);
+        return true;
     });
 }
 
@@ -73675,13 +73709,15 @@ function saveCache(paths_1, key_1, options_1) {
             }
             const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
             core.debug(`File Size: ${archiveFileSize}`);
-            yield cacheHttpClient.saveCache(key, paths, archivePath, {
+            const saved = yield cacheHttpClient.saveCache(key, paths, archivePath, {
                 compressionMethod,
                 enableCrossOsArchive,
                 cacheSize: archiveFileSize
             });
-            // dummy cacheId, if we get there without raising, it means the cache has been saved
-            cacheId = 1;
+            // dummy cacheId, if the cache was uploaded successfully.
+            if (saved) {
+                cacheId = 1;
+            }
         }
         catch (error) {
             const typedError = error;
@@ -74046,9 +74082,13 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getCacheVersion = getCacheVersion;
-exports.getS3Prefix = getS3Prefix;
+exports.getWriteS3Prefix = getWriteS3Prefix;
+exports.getReadS3Prefixes = getReadS3Prefixes;
+exports.normalizeS3Prefix = normalizeS3Prefix;
+const core = __importStar(__nccwpck_require__(37484));
 const crypto = __importStar(__nccwpck_require__(76982));
 const versionSalt = "1.0";
+const maxReadPrefixes = 4;
 function getCacheVersion(paths, compressionMethod, enableCrossOsArchive = false) {
     // don't pass changes upstream
     const components = paths.slice();
@@ -74061,24 +74101,69 @@ function getCacheVersion(paths, compressionMethod, enableCrossOsArchive = false)
     if (process.platform === "win32" && !enableCrossOsArchive) {
         components.push("windows-only");
     }
-    // Add salt to cache version to support breaking changes in cache entry
+    // Add salt to support breaking changes in cache entry
     components.push(versionSalt);
     return crypto
         .createHash("sha256")
         .update(components.join("|"))
         .digest("hex");
 }
-function getS3Prefix(paths, { compressionMethod, enableCrossOsArchive }) {
-    const repository = process.env.GITHUB_REPOSITORY;
-    const repoPrefix = process.env.RUNS_ON_S3_CACHE_REPO_PREFIX;
-    const version = getCacheVersion(paths, compressionMethod, enableCrossOsArchive);
-    if (repoPrefix && repoPrefix.trim() !== "") {
-        return [normalizeS3Prefix(repoPrefix), version].join("/");
+function getWriteS3Prefix(paths, options) {
+    const writePrefix = normalizeS3Prefix(process.env.RUNS_ON_S3_CACHE_WRITE_PREFIX);
+    if (!writePrefix) {
+        return undefined;
     }
-    return ["cache", repository, version].join("/");
+    return getS3Prefix(writePrefix, paths, options);
+}
+function getReadS3Prefixes(paths, options) {
+    return getReadRepositoryPrefixes().map(prefix => getS3Prefix(prefix, paths, options));
+}
+function getReadRepositoryPrefixes() {
+    const raw = process.env.RUNS_ON_S3_CACHE_READ_PREFIXES;
+    if (!raw || raw.trim() === "") {
+        return [];
+    }
+    try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) {
+            core.warning("RUNS_ON_S3_CACHE_READ_PREFIXES must be a JSON array; cache restore is disabled.");
+            return [];
+        }
+        const prefixes = uniqueNormalizedPrefixes(parsed.filter((value) => typeof value === "string"));
+        if (prefixes.length === 0) {
+            core.warning("RUNS_ON_S3_CACHE_READ_PREFIXES contains no usable prefixes; cache restore is disabled.");
+        }
+        if (prefixes.length > maxReadPrefixes) {
+            core.warning(`RUNS_ON_S3_CACHE_READ_PREFIXES has more than ${maxReadPrefixes} prefixes; using the first ${maxReadPrefixes}.`);
+            return prefixes.slice(0, maxReadPrefixes);
+        }
+        return prefixes;
+    }
+    catch (_a) {
+        core.warning("RUNS_ON_S3_CACHE_READ_PREFIXES is invalid JSON; cache restore is disabled.");
+        return [];
+    }
+}
+function getS3Prefix(repositoryPrefix, paths, { compressionMethod, enableCrossOsArchive }) {
+    return [
+        repositoryPrefix,
+        getCacheVersion(paths, compressionMethod, enableCrossOsArchive)
+    ].join("/");
+}
+function uniqueNormalizedPrefixes(values) {
+    const prefixes = [];
+    const seen = new Set();
+    for (const value of values) {
+        const prefix = normalizeS3Prefix(value);
+        if (prefix && !seen.has(prefix)) {
+            seen.add(prefix);
+            prefixes.push(prefix);
+        }
+    }
+    return prefixes;
 }
 function normalizeS3Prefix(prefix) {
-    return prefix.trim().replace(/^\/+|\/+$/g, "");
+    return (prefix || "").trim().replace(/^\/+|\/+$/g, "");
 }
 
 

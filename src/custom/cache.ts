@@ -226,14 +226,16 @@ export async function saveCache(
         const archiveFileSize = utils.getArchiveFileSizeInBytes(archivePath);
         core.debug(`File Size: ${archiveFileSize}`);
 
-        await cacheHttpClient.saveCache(key, paths, archivePath, {
+        const saved = await cacheHttpClient.saveCache(key, paths, archivePath, {
             compressionMethod,
             enableCrossOsArchive,
             cacheSize: archiveFileSize
         });
 
-        // dummy cacheId, if we get there without raising, it means the cache has been saved
-        cacheId = 1;
+        // dummy cacheId, if the cache was uploaded successfully.
+        if (saved) {
+            cacheId = 1;
+        }
     } catch (error) {
         const typedError = error as Error;
         if (typedError.name === ValidationError.name) {
