@@ -10,7 +10,9 @@ import {
 } from "./stateProvider";
 import * as utils from "./utils/actionUtils";
 
-const canSaveToS3 = process.env["RUNS_ON_S3_BUCKET_CACHE"] !== undefined;
+const canSaveToS3 =
+    process.env["RUNS_ON_S3_BUCKET_CACHE"] !== undefined &&
+    process.env["RUNS_ON_S3_BUCKET_CACHE"] !== "";
 
 export async function restoreImpl(
     stateProvider: IStateProvider,
