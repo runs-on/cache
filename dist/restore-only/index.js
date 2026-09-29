@@ -74141,7 +74141,8 @@ const constants_1 = __nccwpck_require__(27242);
 const custom = __importStar(__nccwpck_require__(70897));
 const stateProvider_1 = __nccwpck_require__(52879);
 const utils = __importStar(__nccwpck_require__(8270));
-const canSaveToS3 = process.env["RUNS_ON_S3_BUCKET_CACHE"] !== undefined;
+const canSaveToS3 = process.env["RUNS_ON_S3_BUCKET_CACHE"] !== undefined &&
+    process.env["RUNS_ON_S3_BUCKET_CACHE"] !== "";
 function restoreImpl(stateProvider, earlyExit) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
